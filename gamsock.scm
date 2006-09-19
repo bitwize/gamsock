@@ -337,7 +337,7 @@ c-declare-end
 (define (socket domain type protocol)
   (let* (
 	 (domain (make-enum domain `((unix ,PF_UNIX) (local ,PF_LOCAL) (inet ,PF_INET) 
-				     (inet6 ,PF_INET6) (packet ,PF_PACKET))))
+				     (inet6 ,PF_INET6))))
 	 (type (make-enum type `((stream ,SOCK_STREAM) (dgram ,SOCK_DGRAM) (raw ,SOCK_RAW)
 				 (seqpacket ,SOCK_SEQPACKET))))
 	 (c-socket (c-lambda (int int int) int
@@ -396,12 +396,10 @@ else {
 (define (send sock vec flags)
   (let* ((nf (if (number? flags)
 		 flags
-		 (make-flags flags `((confirm ,MSG_CONFIRM)
+		 (make-flags flags `(
 				 (dont-route ,MSG_DONTROUTE)
 				 (dont-wait ,MSG_DONTWAIT)
 				 (end-of-record ,MSG_EOR)
-				 (more-data ,MSG_MORE)
-				 (no-signal ,MSG_NOSIGNAL)
 				 (oob ,MSG_OOB)))))
 	 (c-send
 	  (c-lambda (scheme-object scheme-object int) int
@@ -422,7 +420,7 @@ ___result = send(soc,buf,bufsiz,fl);
 (define (recv sock len flags)
   (let* ((nf (if (number? flags) 
 		 flags
-		 (make-flags flags `((err-queue ,MSG_ERRQUEUE)
+		 (make-flags flags `(
 				     (oob ,MSG_OOB)
 				     (peek ,MSG_PEEK)
 				     (trunc ,MSG_TRUNC)
