@@ -18,27 +18,70 @@
 
 ; Address families.
 
-(define-int-c-constants AF_UNSPEC AF_LOCAL AF_UNIX AF_INET AF_INET6)
+(define-c-constant address-family/unspecified int "AF_UNSPEC")
+(define-c-constant address-family/unix int "AF_UNIX")
+(define-c-constant address-family/internet int "AF_INET")
+(define-c-constant address-family/internet6 int "AF_INET6")
 
 ; Protocol families.
 
-(define-int-c-constants PF_LOCAL PF_UNIX PF_INET PF_INET6)
+(define-c-constant protocol-family/unspecified int "PF_UNSPEC")
+(define-c-constant protocol-family/unix int "PF_UNIX")
+(define-c-constant protocol-family/internet int "PF_INET")
+(define-c-constant protocol-family/internet6 int "PF_INET6")
 
 ; Socket types.
 
-(define-int-c-constants SOCK_STREAM SOCK_DGRAM SOCK_RAW SOCK_SEQPACKET)
+(define-c-constant socket/stream int "SOCK_STREAM")
+(define-c-constant socket/datagram int "SOCK_DGRAM")
+(define-c-constant socket/raw int "SOCK_RAW")
 
 ; Possible error conditions.
 
-(define-int-c-constants EACCES EADDRINUSE EAGAIN EBADF EINVAL ENOTSOCK EFAULT ELOOP ENAMETOOLONG
-  ENOENT ENOMEM ENOTDIR EROFS EISCONN EINPROGRESS EINTR ENETUNREACH ETIMEDOUT EALREADY
-  EAFNOSUPPORT ENOTCONN EMSGSIZE ECONNRESET EDESTADDRREQ EWOULDBLOCK EOPNOTSUPP EPIPE
-  EPROTONOSUPPORT ENOBUFS ECONNREFUSED EMFILE ENFILE ECONNABORTED EPERM)
+(define-c-constant errno/acces int "EACCES")
+(define-c-constant errno/addrinuse int "EADDRINUSE")
+(define-c-constant errno/again int "EAGAIN")
+(define-c-constant errno/badf int "EBADF")
+(define-c-constant errno/inval int "EINVAL")
+(define-c-constant errno/notsock int "ENOTSOCK")
+(define-c-constant errno/fault int "EFAULT")
+(define-c-constant errno/loop int "ELOOP")
+(define-c-constant errno/nametoolong int "ENAMETOOLONG")
+
+(define-c-constant errno/noent int "ENOENT")
+(define-c-constant errno/nomem int "ENOMEM")
+(define-c-constant errno/notdir int "ENOTDIR")
+(define-c-constant errno/rofs int "EROFS")
+(define-c-constant errno/isconn int "EISCONN")
+(define-c-constant errno/inprogress int "EINPROGRESS")
+(define-c-constant errno/intr int "EINTR")
+(define-c-constant errno/netunreach int "ENETUNREACH")
+(define-c-constant errno/timedout int "ETIMEDOUT")
+(define-c-constant errno/already int "EALREADY")
+
+(define-c-constant errno/afnosupport int "EAFNOSUPPORT")
+(define-c-constant errno/notconn int "ENOTCONN")
+(define-c-constant errno/msgsize int "EMSGSIZE")
+(define-c-constant errno/connreset int "ECONNRESET")
+(define-c-constant errno/destaddrreq int "EDESTADDRREQ")
+(define-c-constant errno/wouldblock int "EWOULDBLOCK")
+(define-c-constant errno/opnotsupp int "EOPNOTSUPP")
+(define-c-constant errno/pipe int "EPIPE")
+
+(define-c-constant errno/protonosupport int "EPROTONOSUPPORT")
+(define-c-constant errno/nobufs int "ENOBUFS")
+(define-c-constant errno/connrefused int "ECONNREFUSED")
+(define-c-constant errno/mfile int "EMFILE")
+(define-c-constant errno/nfile int "ENFILE")
+(define-c-constant errno/connaborted int "ECONNABORTED")
+(define-c-constant errno/perm int "EPERM")
+
 
 ; Send and recv flags.
 
-(define-int-c-constants MSG_OOB MSG_PEEK MSG_TRUNC MSG_WAITALL MSG_DONTWAIT
-  MSG_DONTROUTE MSG_EOR)
+(define-c-constant message/out-of-band int "MSG_OOB")
+(define-c-constant message/peek int "MSG_PEEK")
+(define-c-constant message/dont-route int "MSG_DONTROUTE")
 
 ; Socket address sizes.
 
@@ -91,7 +134,8 @@ int build_c_sockaddr(___SCMOBJ theaddr,struct sockaddr *myaddr)
         struct sockaddr_un *su = (struct sockaddr_un *)myaddr;
         ___SCMOBJ thevec = ___SOCKADDR_DATA(theaddr);
         int len = ___INT(___U8VECTORLENGTH(thevec));
-        len  = (len > 108 ? 108 : len);
+        int maxlen = sizeof(su->sun_path);
+        len  = (len > maxlen ? maxlen : len);
         memcpy((void *)su->sun_path,___CAST(void *,___BODY_AS(thevec,___tSUBTYPED)),len);
         su->sun_path[len ==  108 ? 107 : len] = 0;
       }
@@ -202,7 +246,9 @@ c-declare-end
       (##raise-heap-overflow-exception)
       a))
 
-(define (make-local-sockaddr fn)
+; This does not yet work with character encodings except ASCII/Latin-1.
+
+(define (unix-address->socket-address fn)
   (let* (
 	 (unix-path-max (- *sockaddr-un-len* 2))
 	 (l (min (string-length fn) (- unix-path-max 1)))
@@ -213,15 +259,15 @@ c-declare-end
        ((>= i l) #f)
        (else (u8vector-set! v i (remainder (char->integer (string-ref fn i)) 255))
 	     (loop (+ i 1)))))
-    (macro-make-sockaddr AF_LOCAL v)))
+    (macro-make-sockaddr address-family/unix v)))
 
-(define (local-sockaddr? a)
+(define (unix-socket-address? a)
   (and
    (sockaddr? a)
-   (= (macro-sockaddr-family a) AF_LOCAL)))
+   (= (macro-sockaddr-family a) address-family/unix)))
 
-(define (local-sockaddr-path a)
-  (check-sockaddr a AF_LOCAL 0 local-sockaddr-path (list a))
+(define (socket-address->unix-address a)
+  (check-sockaddr a address-family/unix 0 socket-address->unix-address (list a))
   (let* ((v (macro-sockaddr-address a))
 	(l (u8vector-length v))
 	(s (make-string l #\nul)))
@@ -306,61 +352,40 @@ c-declare-end
 			(e)
 			(loop (+ i 1))))))))))
 
-(define *ip4-address-any* (u8vector 0 0 0 0))
-(define *ip4-address-loopback* (u8vector 127 0 0 1))
+(define ip-address/any (u8vector 0 0 0 0))
+(define ip-address/loopback (u8vector 127 0 0 1))
+(define ip-address/broadcast (u8vector 255 255 255 255))
 
-(define (make-inet-sockaddr host port)
+(define port/any 0)
+
+(define (internet-address->socket-address host port)
   (let* ((ip4a (cond
 		((u8vector? host) host)
 		((string? host) (string->ip4-address host))))
 	 (pv (integer->network-order-vector-16 port)))
 	 
     (check-ip4-address ip4a)
-    (macro-make-sockaddr AF_INET (cons port ip4a))))
+    (macro-make-sockaddr address-family/internet (cons port ip4a))))
 
-(define-sockaddr-family-pred inet-sockaddr? AF_INET)
+(define-sockaddr-family-pred internet-socket-address? address-family/internet)
 
-(define (inet-sockaddr-ip-address a)
-  (check-sockaddr a AF_INET 0 inet-sockaddr-ip-address (list a))
-  (cdr (macro-sockaddr-address a)))
+(define (socket-address->internet-address a)
+  (check-sockaddr a address-family/internet 0 socket-address->internet-address (list a))
+  (values 
+   (cdr (macro-sockaddr-address a))
+   (car (macro-sockaddr-address a))))
 
-(define (inet-sockaddr-port a)
-  (check-sockaddr a AF_INET 0 inet-sockaddr-port (list a))
-  (car (macro-sockaddr-address a)))
+(define (make-unspecified-socket-address)
+  (macro-make-sockaddr address-family/unspecified '()))
 
-(define (make-unspecified-sockaddr)
-  (macro-make-sockaddr AF_UNSPEC '()))
+(define-sockaddr-family-pred unspecified-sockaddr? address-family/unspecified)
 
-(define-sockaddr-family-pred unspecified-sockaddr? AF_UNSPEC)
-
-(define (close sock)
+(define (close-socket sock)
   (let* ( (c-close (c-lambda (int) int
 			    "___result = close(___arg1);")))
     (c-close (macro-socket-fd sock))))
 
 (define errno (c-lambda () int "___result = errno;"))
-
-
-(define (make-flags lst fl)
-  (let loop ((l lst)
-	     (n 0))
-      (cond
-       ((null? l) n)
-       (else
-	(let* ((c (assoc (car l) fl)))
-	  (cond
-	   ((not c) (loop (cdr l) n))
-	   (else (loop (cdr l) (bitwise-ior n (cadr c))))))))))
-
-(define (make-enum int-or-sym en)
-  (if (integer? int-or-sym)
-      int-or-sym
-      (let ((a (assoc int-or-sym en)))
-	(if a
-	    (cadr a)
-	    (error "invalid enum symbol")))))
-
-
 
 (define (raise-socket-exception-if-error thunk proc . args)
   (let ((b (thunk)))
@@ -382,25 +407,19 @@ c-declare-end
   `(let* (
 	  (sockobj (macro-make-socket ,fd #f)))
     (macro-socket-will-set! sockobj 
-			    (make-will sockobj (lambda (s) (close s))))
+			    (make-will sockobj (lambda (s) (close-socket s))))
     sockobj))
 
-(define (socket domain type protocol)
+(define (create-socket domain type #!optional (protocol 0))
   (let* (
-	 (domain (make-enum domain `((unix ,PF_UNIX) (local ,PF_LOCAL) (inet ,PF_INET) 
-				     (inet6 ,PF_INET6))))
-	 (type (make-enum type `((stream ,SOCK_STREAM) (dgram ,SOCK_DGRAM) (raw ,SOCK_RAW)
-				 (seqpacket ,SOCK_SEQPACKET))))
 	 (c-socket (c-lambda (int int int) int
 			     "___result = socket(___arg1,___arg2,___arg3);"))
-	 (c-close (c-lambda (int) int
-			    "___result = close(___arg1);"))
 	 (sockobj (macro-really-make-socket (raise-socket-exception-if-error
-				      (lambda () (c-socket domain type protocol)) socket))))
+				      (lambda () (c-socket domain type protocol)) create-socket))))
     sockobj))
 
 
-(define (bind sock addr)
+(define (bind-socket sock addr)
   (let* ((c-bind (c-lambda (scheme-object scheme-object) int
 "
 int mysize;
@@ -411,12 +430,13 @@ ___result = bind(___CAST(int,___INT(___UNCHECKEDSTRUCTUREREF(___arg1,___FIX(1),_
 "
 )))
     (if (not (socket? sock))
-	(##raise-type-exception 0 'socket bind (list sock addr))
+	(##raise-type-exception 0 'socket bind-socket (list sock addr))
 	(if (not (sockaddr? addr))
-	    (##raise-type-exception 1 'sockaddr bind (list sock addr))
-	    (raise-socket-exception-if-error (lambda () (c-bind sock addr)) bind)))))
+	    (##raise-type-exception 1 'sockaddr bind-socket (list sock addr))
+	    (raise-socket-exception-if-error (lambda () (c-bind sock addr)) bind-socket)))
+    (if #f #f)))
 
-(define (connect sock addr)
+(define (connect-socket sock addr)
   (let* ((c-connect (c-lambda (scheme-object scheme-object) int
 "
 int mysize;
@@ -427,21 +447,18 @@ ___result = connect(___CAST(int,___INT(___UNCHECKEDSTRUCTUREREF(___arg1,___FIX(1
 "
 )))
     (if (not (socket? sock))
-	(##raise-type-exception 0 'socket connect (list sock addr))
+	(##raise-type-exception 0 'socket connect-socket (list sock addr))
 	(if (not (sockaddr? addr))
-	    (##raise-type-exception 1 'sockaddr connect (list sock addr))
-	    (raise-socket-exception-if-error (lambda () (c-connect sock addr)) connect)))))
+	    (##raise-type-exception 1 'sockaddr connect-socket (list sock addr))
+	    (raise-socket-exception-if-error (lambda () (c-connect sock addr)) connect-socket)))
+    (if #f #f)))
 
 
 
-(define (send sock vec flags)
-  (let* ((nf (if (number? flags)
-		 flags
-		 (make-flags flags `(
-				 (dont-route ,MSG_DONTROUTE)
-				 (dont-wait ,MSG_DONTWAIT)
-				 (end-of-record ,MSG_EOR)
-				 (oob ,MSG_OOB)))))
+(define (send-message sock vec #!optional (start 0) (end #f) (flags 0))
+  (let* (
+	 (svec (if (and (= start 0) (not end)) vec
+		   (subu8vector vec start (if (not end) (u8vector-length vec) end))))
 	 (c-send
 	  (c-lambda (scheme-object scheme-object int) int
 		    "
@@ -452,20 +469,14 @@ int fl = ___CAST(int,___INT(___arg3));
 ___result = send(soc,buf,bufsiz,fl);
 ")))
     (if (not (socket? sock))
-	(##raise-type-exception 0 'socket send (list sock vec flags)))
+	(##raise-type-exception 0 'socket send-message (list sock vec start end flags)))
     (if (not (u8vector? vec))
-	(##raise-type-exception 1 'u8vector send (list sock vec flags)))
-    (raise-socket-exception-if-error (lambda () (c-send sock vec nf)) send)))
+	(##raise-type-exception 1 'u8vector send-message (list sock vec start end flags)))
+    (raise-socket-exception-if-error (lambda () (c-send sock svec flags)) send-message)))
 
 
-(define (recv sock len flags)
-  (let* ((nf (if (number? flags) 
-		 flags
-		 (make-flags flags `(
-				     (oob ,MSG_OOB)
-				     (peek ,MSG_PEEK)
-				     (trunc ,MSG_TRUNC)
-				     (waitall ,MSG_WAITALL)))))
+(define (receive-message sock len #!optional (flags 0))
+  (let* (
 	 (vec (make-u8vector len 0))
 	 (c-recv
 	  (c-lambda (scheme-object scheme-object int) int
@@ -477,12 +488,12 @@ int fl = ___CAST(int,___INT(___arg3));
 ___result = recv(soc,buf,bufsiz,fl);
 ")))
     (if (not (socket? sock))
-	(##raise-type-exception 0 'socket recv (list sock len flags)))
+	(##raise-type-exception 0 'socket receive-message (list sock len flags)))
     (let* ((size-actually-recvd
-	    (raise-socket-exception-if-error (lambda () (c-recv sock vec nf)) recv)))
+	    (raise-socket-exception-if-error (lambda () (c-recv sock vec flags)) receive-message)))
       (subu8vector vec 0 size-actually-recvd))))
 
-(define (listen sock backlog)
+(define (listen-socket sock backlog)
   (let* ((c-listen
 	  (c-lambda (scheme-object int) int
 		    "
@@ -490,11 +501,12 @@ int soc = ___CAST(int,___INT(___UNCHECKEDSTRUCTUREREF(___arg1,___FIX(1),___SUB(0
 ___result = listen(soc,___arg2);
 ")))
     (if (not (socket? sock))
-	(##raise-type-exception 0 'socket listen (list sock backlog)))
-    (raise-socket-exception-if-error (lambda () (c-listen sock backlog)) listen)
+	(##raise-type-exception 0 'socket listen-socket (list sock backlog)))
+    (raise-socket-exception-if-error (lambda () (c-listen sock backlog)) listen-socket)
+    (if #f #f)
     ))
 
-(define (getsockname sock) 
+(define (socket-local-address sock) 
   (let* (
 	 (dummy-sockaddr (macro-make-sockaddr 0 #f))
 	 (c-getsockname
@@ -513,12 +525,12 @@ else {
 }
 ")))
     (if (not (socket? sock))
-	(##raise-type-exception 0 'socket getsockname (list sock)))
+	(##raise-type-exception 0 'socket socket-local-address (list sock)))
     (raise-socket-exception-if-error (lambda () 
-				       (c-getsockname sock dummy-sockaddr)) getsockname)
+				       (c-getsockname sock dummy-sockaddr)) socket-local-address)
     (raise-if-sockaddr-alloc-error dummy-sockaddr)))
 
-(define (getpeername sock) 
+(define (socket-remote-address sock) 
   (let* (
 	 (dummy-sockaddr (macro-make-sockaddr 0 #f))
 	 (c-getpeername
@@ -537,12 +549,12 @@ else {
 }
 ")))
     (if (not (socket? sock))
-	(##raise-type-exception 0 'socket getpeername (list sock)))
+	(##raise-type-exception 0 'socket socket-remote-address (list sock)))
     (raise-socket-exception-if-error (lambda () 
-				       (c-getpeername sock dummy-sockaddr)) getpeername)
+				       (c-getpeername sock dummy-sockaddr)) socket-remote-address)
     (raise-if-sockaddr-alloc-error dummy-sockaddr)))
 
-(define (accept sock) 
+(define (accept-connection sock) 
   (let* (
 	 (dummy-sockaddr (macro-make-sockaddr 0 #f))
 	 (c-accept
@@ -561,9 +573,9 @@ else {
 }
 ")))
     (if (not (socket? sock))
-	(##raise-type-exception 0 'socket getpeername (list sock)))
+	(##raise-type-exception 0 'socket accept-connection (list sock)))
     (let* ((s2 
-	    (raise-socket-exception-if-error (lambda () (c-accept sock dummy-sockaddr)) accept)))
+	    (raise-socket-exception-if-error (lambda () (c-accept sock dummy-sockaddr)) accept-connection)))
       (raise-if-sockaddr-alloc-error dummy-sockaddr)
       (values (macro-really-make-socket s2) dummy-sockaddr))))
 
