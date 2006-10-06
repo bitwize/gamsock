@@ -180,7 +180,9 @@ int build_scheme_sockaddr(struct sockaddr *myaddr,___SCMOBJ theaddr,int addr_siz
         struct sockaddr_un *su = (struct sockaddr_un *)myaddr;
         int len = strlen(su->sun_path);
         thedata = ___EXT(___alloc_scmobj)(___sU8VECTOR,len,___STILL);
-        if(___FIXNUMP(thedata)) {return thedata;}
+        if(___FIXNUMP(thedata)) {
+          return thedata;
+        }
         memcpy(___CAST(unsigned char *,___BODY_AS(thedata,___tSUBTYPED)),myaddr->sa_data,addr_size - sizeof(sa_family_t));
       }
       break;
@@ -188,7 +190,9 @@ int build_scheme_sockaddr(struct sockaddr *myaddr,___SCMOBJ theaddr,int addr_siz
       {
         struct sockaddr_in *si = (struct sockaddr_in *)myaddr;
         thedata = ___EXT(___make_pair)(___FIX(ntohs(si->sin_port)),___EXT(___alloc_scmobj)(___sU8VECTOR,4,___STILL),___STILL);
-        if(___FIXNUMP(thedata)) {return thedata;}
+        if(___FIXNUMP(thedata)) {
+          return thedata;
+        }
         memcpy(___CAST(unsigned char *,___BODY_AS(___PAIR_CDR(thedata),___tSUBTYPED)),&(si->sin_addr),4);
       }
       break;
