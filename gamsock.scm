@@ -83,22 +83,79 @@ int build_c_sockaddr(___SCMOBJ theaddr,struct sockaddr *myaddr)
 {
   size_t len = ___CAST(size_t,___INT(___U8VECTORLENGTH(___SOCKADDR_DATA(theaddr))));
   myaddr->sa_family = ___CAST(sa_family_t,___INT(___SOCKADDR_FAM(theaddr)));
-  memcpy(myaddr->sa_data,___CAST(unsigned char *,___BODY_AS(___SOCKADDR_DATA(theaddr),___tSUBTYPED)),len);  
+  switch(myaddr->sa_family) {
+    case AF_UNSPEC:
+      break;
+    case AF_UNIX:
+      {
+        struct sockaddr_un *su = (struct sockaddr_un *)myaddr;
+        ___SCMOBJ thevec = ___SOCKADDR_DATA(theaddr);
+        int len = ___INT(___U8VECTORLENGTH(thevec));
+        len  = (len > 108 ? 108 : len);
+        memcpy((void *)su->sun_path,___CAST(void *,___BODY_AS(thevec,___tSUBTYPED)),len);
+        su->sun_path[len ==  108 ? 107 : len] = 0;
+      }
+      break;
+    case AF_INET:
+      {
+        struct sockaddr_in *si = (struct sockaddr_in *)myaddr;
+        ___SCMOBJ thepr = ___SOCKADDR_DATA(theaddr);
+        si->sin_port = htons(___INT(___PAIR_CAR(thepr)));
+        memcpy((void *)&(si->sin_addr),___CAST(void *,___BODY_AS(___PAIR_CDR(thepr),___tSUBTYPED)),4);
+      }
+      break;
+    case AF_INET6:
+      /* WRITE ME!!! */
+      break; 
+  }
   return ___NO_ERR;
 }
 
-size_t c_sockaddr_size(___SCMOBJ theaddr) {
-  return ___CAST(size_t,___INT(___U8VECTORLENGTH(___SOCKADDR_DATA(theaddr))) + sizeof(sa_family_t));
+int c_sockaddr_size(struct sockaddr *myaddr) {
+  switch(myaddr->sa_family) {
+    case AF_UNSPEC:
+      return sizeof(struct sockaddr);
+    case AF_UNIX:
+      return sizeof(struct sockaddr_un);
+    case AF_INET:
+      return sizeof(struct sockaddr_in);
+    case AF_INET6:
+      return sizeof(struct sockaddr_in6);
+    default:
+      return sizeof(struct sockaddr);
+  }
 }
 
 int build_scheme_sockaddr(struct sockaddr *myaddr,___SCMOBJ theaddr,int addr_size)
 {
-  ___SCMOBJ thevec;
-  thevec = ___EXT(___alloc_scmobj)(___sU8VECTOR,addr_size - sizeof(sa_family_t),___STILL);
-  if(___FIXNUMP(thevec)) {return thevec;}
-  memcpy(___CAST(unsigned char *,___BODY_AS(thevec,___tSUBTYPED)),myaddr->sa_data,addr_size - sizeof(sa_family_t));
+  ___SCMOBJ thedata;
+  switch(myaddr->sa_family)
+  {
+    case AF_UNIX:
+      {
+        struct sockaddr_un *su = (struct sockaddr_un *)myaddr;
+        int len = strlen(su->sun_path);
+        thedata = ___EXT(___alloc_scmobj)(___sU8VECTOR,len,___STILL);
+        if(___FIXNUMP(thedata)) {return thedata;}
+        memcpy(___CAST(unsigned char *,___BODY_AS(thedata,___tSUBTYPED)),myaddr->sa_data,addr_size - sizeof(sa_family_t));
+      }
+      break;
+    case AF_INET:
+      {
+        struct sockaddr_in *si = (struct sockaddr_in *)myaddr;
+        thedata = ___EXT(___make_pair)(___FIX(ntohs(si->sin_port)),___EXT(___alloc_scmobj)(___sU8VECTOR,4,___STILL),___STILL);
+        if(___FIXNUMP(thedata)) {return thedata;}
+        memcpy(___CAST(unsigned char *,___BODY_AS(___PAIR_CDR(thedata),___tSUBTYPED)),&(si->sin_addr),4);
+      }
+      break;
+    case AF_INET6:
+      /* WRITE ME!!! */
+    default:
+      thedata = ___NUL;
+      break;
+  }
   ___UNCHECKEDSTRUCTURESET(theaddr,___FIX(myaddr->sa_family),___FIX(1),___SUB(0),___FAL);
-  ___UNCHECKEDSTRUCTURESET(theaddr,thevec,___FIX(2),___SUB(0),___FAL);
+  ___UNCHECKEDSTRUCTURESET(theaddr,thedata,___FIX(2),___SUB(0),___FAL);
   return ___NO_ERR;
 }
 
@@ -259,26 +316,20 @@ c-declare-end
 	 (pv (integer->network-order-vector-16 port)))
 	 
     (check-ip4-address ip4a)
-    (macro-make-sockaddr AF_INET (u8vector-append
-				  pv ip4a
-				  (make-u8vector
-				   (- (- *sockaddr-in-len* 2)
-				      (+ (u8vector-length pv)
-					    (u8vector-length ip4a)))
-				   0)))))
+    (macro-make-sockaddr AF_INET (cons port ip4a))))
 
 (define-sockaddr-family-pred inet-sockaddr? AF_INET)
 
 (define (inet-sockaddr-ip-address a)
   (check-sockaddr a AF_INET 0 inet-sockaddr-ip-address (list a))
-  (subu8vector (macro-sockaddr-address a) 2 6))
+  (cdr (macro-sockaddr-address a)))
 
 (define (inet-sockaddr-port a)
   (check-sockaddr a AF_INET 0 inet-sockaddr-port (list a))
-  (network-order-vector->integer-16 (subu8vector (macro-sockaddr-address a) 0 2)))
+  (car (macro-sockaddr-address a)))
 
 (define (make-unspecified-sockaddr)
-  (macro-make-sockaddr AF_UNSPEC (make-u8vector 14 0)))
+  (macro-make-sockaddr AF_UNSPEC '()))
 
 (define-sockaddr-family-pred unspecified-sockaddr? AF_UNSPEC)
 
@@ -352,16 +403,11 @@ c-declare-end
 (define (bind sock addr)
   (let* ((c-bind (c-lambda (scheme-object scheme-object) int
 "
-size_t mysize = c_sockaddr_size(___arg2);
-struct sockaddr *myaddr = (struct sockaddr *)(malloc(mysize));
-if(myaddr != NULL) {
-  build_c_sockaddr(___arg2,myaddr);
-  ___result = bind(___CAST(int,___INT(___UNCHECKEDSTRUCTUREREF(___arg1,___FIX(1),___SUB(0),___FAL))),myaddr,mysize);
-}
-else {
-  ___result = -1;
-}
-#define ___AT_END if(myaddr != NULL) { free(myaddr); }
+int mysize;
+struct sockaddr_storage myaddr;
+build_c_sockaddr(___arg2,(struct sockaddr *)&myaddr);
+mysize = c_sockaddr_size((struct sockaddr *)&myaddr);
+___result = bind(___CAST(int,___INT(___UNCHECKEDSTRUCTUREREF(___arg1,___FIX(1),___SUB(0),___FAL))),(struct sockaddr *)&myaddr,mysize);
 "
 )))
     (if (not (socket? sock))
@@ -373,16 +419,11 @@ else {
 (define (connect sock addr)
   (let* ((c-connect (c-lambda (scheme-object scheme-object) int
 "
-size_t mysize = c_sockaddr_size(___arg2);
-struct sockaddr *myaddr = (struct sockaddr *)(malloc(mysize));
-if(myaddr != NULL) {
-  build_c_sockaddr(___arg2,myaddr);
-  ___result = connect(___CAST(int,___INT(___UNCHECKEDSTRUCTUREREF(___arg1,___FIX(1),___SUB(0),___FAL))),myaddr,mysize);
-}
-else {
-  ___result = -1;
-}
-#define ___AT_END if(myaddr != NULL) { free(myaddr); }
+int mysize;
+struct sockaddr_storage myaddr;
+build_c_sockaddr(___arg2,(struct sockaddr *)&myaddr);
+mysize = c_sockaddr_size((struct sockaddr *)&myaddr);
+___result = connect(___CAST(int,___INT(___UNCHECKEDSTRUCTUREREF(___arg1,___FIX(1),___SUB(0),___FAL))),(struct sockaddr *)&myaddr,mysize);
 "
 )))
     (if (not (socket? sock))
