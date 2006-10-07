@@ -220,13 +220,13 @@ c-declare-end
   (proc invalid-sockaddr-exception-procedure)
   (args invalid-sockaddr-exception-arguments))
 
-(define (sockaddr? obj) (macro-sockaddr? obj))
+(define (socket-address? obj) (macro-sockaddr? obj))
 (define (socket? obj) (macro-socket? obj))
 
-(define (sockaddr-family obj) (macro-sockaddr-family obj))
+(define (socket-address-family obj) (macro-sockaddr-family obj))
 
 (define (check-sockaddr obj fam n proc args)
-  (if (not (sockaddr? obj))
+  (if (not (socket-address? obj))
       (##raise-type-exception n 'sockaddr proc args)
       )
   (if (not (= (macro-sockaddr-family obj) fam))
@@ -236,7 +236,7 @@ c-declare-end
   (define (sym-concat sym1 sym2)
     (string->symbol (string-append (symbol->string sym1) (symbol->string sym2))))
   `(define (,name a)
-     (and (sockaddr? a)
+     (and (socket-address? a)
 	  (= (macro-sockaddr-family a) ,family))))
 
 ; build_scheme_sockaddr will put the error code in place of the address data vector
@@ -267,7 +267,7 @@ c-declare-end
 
 (define (unix-socket-address? a)
   (and
-   (sockaddr? a)
+   (socket-address? a)
    (= (macro-sockaddr-family a) address-family/unix)))
 
 (define (socket-address->unix-address a)
@@ -382,7 +382,7 @@ c-declare-end
 (define (make-unspecified-socket-address)
   (macro-make-sockaddr address-family/unspecified '()))
 
-(define-sockaddr-family-pred unspecified-sockaddr? address-family/unspecified)
+(define-sockaddr-family-pred unspecified-socket-address? address-family/unspecified)
 
 (define (close-socket sock)
   (let* ( (c-close (c-lambda (int) int
@@ -435,7 +435,7 @@ ___result = bind(___CAST(int,___INT(___UNCHECKEDSTRUCTUREREF(___arg1,___FIX(1),_
 )))
     (if (not (socket? sock))
 	(##raise-type-exception 0 'socket bind-socket (list sock addr))
-	(if (not (sockaddr? addr))
+	(if (not (socket-address? addr))
 	    (##raise-type-exception 1 'sockaddr bind-socket (list sock addr))
 	    (raise-socket-exception-if-error (lambda () (c-bind sock addr)) bind-socket)))
     (if #f #f)))
@@ -452,14 +452,15 @@ ___result = connect(___CAST(int,___INT(___UNCHECKEDSTRUCTUREREF(___arg1,___FIX(1
 )))
     (if (not (socket? sock))
 	(##raise-type-exception 0 'socket connect-socket (list sock addr))
-	(if (not (sockaddr? addr))
+	(if (not (socket-address? addr))
 	    (##raise-type-exception 1 'sockaddr connect-socket (list sock addr))
 	    (raise-socket-exception-if-error (lambda () (c-connect sock addr)) connect-socket)))
     (if #f #f)))
 
 
 
-(define (send-message sock vec #!optional (start 0) (end #f) (flags 0))
+(define (send-message sock vec #!optional (start 0) (end #f) (flags 0)
+		      (addr #f))
   (let* (
 	 (svec (if (and (= start 0) (not end)) vec
 		   (subu8vector vec start (if (not end) (u8vector-length vec) end))))
@@ -471,31 +472,56 @@ void *buf = ___CAST(void *,___BODY_AS(___arg2,___tSUBTYPED));
 size_t bufsiz = ___CAST(size_t,___INT(___U8VECTORLENGTH(___arg2)));
 int fl = ___CAST(int,___INT(___arg3));
 ___result = send(soc,buf,bufsiz,fl);
-")))
-    (if (not (socket? sock))
-	(##raise-type-exception 0 'socket send-message (list sock vec start end flags)))
-    (if (not (u8vector? vec))
-	(##raise-type-exception 1 'u8vector send-message (list sock vec start end flags)))
-    (raise-socket-exception-if-error (lambda () (c-send sock svec flags)) send-message)))
-
-
-(define (receive-message sock len #!optional (flags 0))
-  (let* (
-	 (vec (make-u8vector len 0))
-	 (c-recv
-	  (c-lambda (scheme-object scheme-object int) int
+"))
+	 (c-sendto
+	  (c-lambda (scheme-object scheme-object int scheme-object) int
 		    "
+struct sockaddr_storage sa;
+int sa_size;
 int soc = ___CAST(int,___INT(___UNCHECKEDSTRUCTUREREF(___arg1,___FIX(1),___SUB(0),___FAL)));
 void *buf = ___CAST(void *,___BODY_AS(___arg2,___tSUBTYPED));
 size_t bufsiz = ___CAST(size_t,___INT(___U8VECTORLENGTH(___arg2)));
 int fl = ___CAST(int,___INT(___arg3));
-___result = recv(soc,buf,bufsiz,fl);
+build_c_sockaddr(___arg4,(struct sockaddr *)&sa);
+sa_size = c_sockaddr_size((struct sockaddr *)&sa);
+___result = sendto(soc,buf,bufsiz,fl,(struct sockaddr *)&sa,sa_size);
+")))
+    (if (not (socket? sock))
+	(##raise-type-exception 0 'socket send-message (list sock vec start end flags addr)))
+    (if (not (u8vector? vec))
+	(##raise-type-exception 1 'u8vector send-message (list sock vec start end flags addr)))
+    (if (not addr)
+	(raise-socket-exception-if-error (lambda () (c-send sock svec flags)) send-message)
+	(if (not (socket-address? addr))
+	    (##raise-type-exception 3 'socket-address send-message (list sock vec start end flags addr))
+	    (raise-socket-exception-if-error (lambda () (c-sendto sock svec flags addr)) send-message)))))
+
+
+(define (receive-message sock len #!optional (flags 0))
+  (let* (
+         (addr (make-unspecified-socket-address))
+	 (vec (make-u8vector len 0))
+	 (c-recvfrom
+	  (c-lambda (scheme-object scheme-object int scheme-object) int
+		    "
+struct sockaddr_storage sa;
+int sa_size;
+int soc = ___CAST(int,___INT(___UNCHECKEDSTRUCTUREREF(___arg1,___FIX(1),___SUB(0),___FAL)));
+void *buf = ___CAST(void *,___BODY_AS(___arg2,___tSUBTYPED));
+size_t bufsiz = ___CAST(size_t,___INT(___U8VECTORLENGTH(___arg2)));
+int fl = ___CAST(int,___INT(___arg3));
+___result = recvfrom(soc,buf,bufsiz,fl,(struct sockaddr *)&sa,&sa_size);
+if(sa_size > 0) {
+  build_scheme_sockaddr((struct sockaddr *)&sa,___arg4,sa_size);
+}
 ")))
     (if (not (socket? sock))
 	(##raise-type-exception 0 'socket receive-message (list sock len flags)))
     (let* ((size-actually-recvd
-	    (raise-socket-exception-if-error (lambda () (c-recv sock vec flags)) receive-message)))
-      (subu8vector vec 0 size-actually-recvd))))
+	    (raise-socket-exception-if-error (lambda () (c-recvfrom sock vec flags addr)) receive-message)))
+      (values
+       (subu8vector vec 0 size-actually-recvd)
+       addr))))
 
 (define (listen-socket sock backlog)
   (let* ((c-listen
