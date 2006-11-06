@@ -117,10 +117,34 @@
 
 (implement-type-sockaddr)
 
+(define-type sockaddr-inet6-info
+  id: 74065378-a567-ba71-0047-22b413ad9797
+  type-exhibitor: macro-type-sockaddr-inet6-info
+  constructor: macro-make-sockaddr-inet6-info
+  implementer: implement-type-sockaddr-inet6-info
+  opaque:
+  macros:
+  prefix: macro-
+  predicate: macro-sockaddr-inet6-info?
+  (host unprintable:)
+  (port unprintable:)
+  (flowinfo unprintable:)
+  (scope-id unprintable:))
+
+(implement-type-sockaddr-inet6-info)
+
+(c-define (make-empty-sockaddr-inet6-info) () scheme-object "make_empty_sockaddr_inet6_info" "static" (let ((i (macro-make-sockaddr-inet6-info #f #f #f #f))) i))
+
 (c-declare #<<c-declare-end
 
 #define ___SOCKADDR_FAM(x) ___UNCHECKEDSTRUCTUREREF(x,___FIX(1),___SUB(0),___FAL)
 #define ___SOCKADDR_DATA(x) ___UNCHECKEDSTRUCTUREREF(x,___FIX(2),___SUB(0),___FAL)
+
+#define ___INET6_INFO_HOST(x) ___UNCHECKEDSTRUCTUREREF(x,___FIX(1),___SUB(0),___FAL)
+#define ___INET6_INFO_PORT(x) ___UNCHECKEDSTRUCTUREREF(x,___FIX(2),___SUB(0),___FAL)
+#define ___INET6_INFO_FLOWINFO(x) ___UNCHECKEDSTRUCTUREREF(x,___FIX(3),___SUB(0),___FAL)
+#define ___INET6_INFO_SCOPEID(x) ___UNCHECKEDSTRUCTUREREF(x,___FIX(4),___SUB(0),___FAL)
+
 
 int build_c_sockaddr(___SCMOBJ theaddr,struct sockaddr *myaddr)
 {
@@ -135,9 +159,9 @@ int build_c_sockaddr(___SCMOBJ theaddr,struct sockaddr *myaddr)
         ___SCMOBJ thevec = ___SOCKADDR_DATA(theaddr);
         int len = ___INT(___U8VECTORLENGTH(thevec));
         int maxlen = sizeof(su->sun_path);
-        len  = (len > maxlen ? maxlen : len);
+        len  = (len >= maxlen ? maxlen - 1: len);
         memcpy((void *)su->sun_path,___CAST(void *,___BODY_AS(thevec,___tSUBTYPED)),len);
-        su->sun_path[len ==  108 ? 107 : len] = 0;
+        su->sun_path[len] = 0;
       }
       break;
     case AF_INET:
@@ -149,7 +173,16 @@ int build_c_sockaddr(___SCMOBJ theaddr,struct sockaddr *myaddr)
       }
       break;
     case AF_INET6:
-      /* WRITE ME!!! */
+      {
+        struct sockaddr_in6 *si = (struct sockaddr_in6 *)myaddr;
+        ___SCMOBJ thedata = ___SOCKADDR_DATA(theaddr);
+        unsigned short port = ___INT(___INET6_INFO_PORT(thedata));
+        unsigned int ___temp;
+        si->sin6_port = htons(port);
+        si->sin6_flowinfo = htonl(___INT(___INET6_INFO_FLOWINFO(thedata)));
+        si->sin6_scope_id = htonl(___U32UNBOX(___INET6_INFO_SCOPEID(thedata)));
+        memcpy((void *)&(si->sin6_addr),___CAST(void *,___BODY_AS(___INET6_INFO_HOST(thedata),___tSUBTYPED)),sizeof(struct in6_addr));
+      }
       break; 
   }
   return ___NO_ERR;
@@ -183,7 +216,7 @@ int build_scheme_sockaddr(struct sockaddr *myaddr,___SCMOBJ theaddr,int addr_siz
         if(___FIXNUMP(thedata)) {
           return thedata;
         }
-        memcpy(___CAST(unsigned char *,___BODY_AS(thedata,___tSUBTYPED)),myaddr->sa_data,addr_size - sizeof(sa_family_t));
+        memcpy(___CAST(unsigned char *,___BODY_AS(thedata,___tSUBTYPED)),myaddr->sa_data,len);
       }
       break;
     case AF_INET:
@@ -197,7 +230,20 @@ int build_scheme_sockaddr(struct sockaddr *myaddr,___SCMOBJ theaddr,int addr_siz
       }
       break;
     case AF_INET6:
-      /* WRITE ME!!! */
+      {
+        struct sockaddr_in6 *si = (struct sockaddr_in6 *)myaddr;
+        ___SCMOBJ thevec = ___EXT(___alloc_scmobj)(___sU8VECTOR,sizeof(struct
+          in6_addr),___STILL);
+        unsigned int ___temp;
+         
+        thedata = make_empty_sockaddr_inet6_info();
+	___UNCHECKEDSTRUCTURESET(thedata,thevec,___FIX(1),___SUB(0),___FAL);
+	___UNCHECKEDSTRUCTURESET(thedata,___FIX(ntohs(si->sin6_port)),___FIX(2),___SUB(0),___FAL);
+	___UNCHECKEDSTRUCTURESET(thedata,___FIX(ntohl(si->sin6_flowinfo)),___FIX(3),___SUB(0),___FAL);
+        ___UNCHECKEDSTRUCTURESET(thedata,___U32BOX(ntohl(si->sin6_scope_id)),___FIX(4),___SUB(0),___FAL);
+        memcpy(___CAST(unsigned char *,___BODY_AS(thevec,___tSUBTYPED)),&(si->sin6_addr),sizeof(struct in6_addr));
+      }
+      break;
     default:
       thedata = ___NUL;
       break;
@@ -227,7 +273,7 @@ c-declare-end
 
 (define (check-sockaddr obj fam n proc args)
   (if (not (socket-address? obj))
-      (##raise-type-exception n 'sockaddr proc args)
+      (##raise-type-exception n (macro-type-sockaddr) proc args)
       )
   (if (not (= (macro-sockaddr-family obj) fam))
       (raise (make-invalid-sockaddr-exception n fam proc args))))
@@ -348,19 +394,18 @@ c-declare-end
 
 (define (check-ip4-address v)
   (let* ((e raise-not-an-ip-address))
-    (if (not (and (u8vector? v) (= (u8vector-length v) 4))) (e)
-	(let loop ((i 0))
-	  (cond ((< i (u8vector-length v))
-		 (let ((r (u8vector-ref v i)))
-		    (if (or (not (integer? r)) (not (exact? r)) (> r 255) (< r 0))
-			(e)
-			(loop (+ i 1))))))))))
+    (if (not (and (u8vector? v) (= (u8vector-length v) 4))) (e))))
+
+(define (check-ip6-address v)
+  (let* ((e raise-not-an-ip-address))
+    (if (not (and (u8vector? v) (= (u8vector-length v) 16))) (e))))
 
 (define ip-address/any (u8vector 0 0 0 0))
 (define ip-address/loopback (u8vector 127 0 0 1))
 (define ip-address/broadcast (u8vector 255 255 255 255))
 
 (define port/any 0)
+
 
 (define (internet-address->socket-address host port)
   (let* ((ip4a (cond
@@ -378,6 +423,21 @@ c-declare-end
   (values 
    (cdr (macro-sockaddr-address a))
    (car (macro-sockaddr-address a))))
+
+(define (internet6-address->socket-address host port flowinfo scope-id)
+  (check-ip6-address host)
+  (macro-make-sockaddr
+   address-family/internet6
+   (macro-make-sockaddr-inet6-info host port flowinfo scope-id)))
+
+(define (socket-address->internet6-address a)
+  (check-sockaddr a address-family/internet6 0 socket-address->internet-address (list a))
+  (let* ((b (macro-sockaddr-address a)))
+    (values 
+     (macro-sockaddr-inet6-info-host b)
+     (macro-sockaddr-inet6-info-port b)
+     (macro-sockaddr-inet6-info-flowinfo b)
+     (macro-sockaddr-inet6-info-scope-id b))))
 
 (define (make-unspecified-socket-address)
   (macro-make-sockaddr address-family/unspecified '()))
@@ -434,9 +494,9 @@ ___result = bind(___CAST(int,___INT(___UNCHECKEDSTRUCTUREREF(___arg1,___FIX(1),_
 "
 )))
     (if (not (socket? sock))
-	(##raise-type-exception 0 'socket bind-socket (list sock addr))
+	(##raise-type-exception 0 (macro-type-socket) bind-socket (list sock addr))
 	(if (not (socket-address? addr))
-	    (##raise-type-exception 1 'sockaddr bind-socket (list sock addr))
+	    (##raise-type-exception 1 (macro-type-sockaddr) bind-socket (list sock addr))
 	    (raise-socket-exception-if-error (lambda () (c-bind sock addr)) bind-socket)))
     (if #f #f)))
 
@@ -451,9 +511,9 @@ ___result = connect(___CAST(int,___INT(___UNCHECKEDSTRUCTUREREF(___arg1,___FIX(1
 "
 )))
     (if (not (socket? sock))
-	(##raise-type-exception 0 'socket connect-socket (list sock addr))
+	(##raise-type-exception 0 (macro-type-socket) connect-socket (list sock addr))
 	(if (not (socket-address? addr))
-	    (##raise-type-exception 1 'sockaddr connect-socket (list sock addr))
+	    (##raise-type-exception 1 (macro-type-sockaddr) connect-socket (list sock addr))
 	    (raise-socket-exception-if-error (lambda () (c-connect sock addr)) connect-socket)))
     (if #f #f)))
 
@@ -487,13 +547,13 @@ sa_size = c_sockaddr_size((struct sockaddr *)&sa);
 ___result = sendto(soc,buf,bufsiz,fl,(struct sockaddr *)&sa,sa_size);
 ")))
     (if (not (socket? sock))
-	(##raise-type-exception 0 'socket send-message (list sock vec start end flags addr)))
+	(##raise-type-exception 0 (macro-type-socket) send-message (list sock vec start end flags addr)))
     (if (not (u8vector? vec))
 	(##raise-type-exception 1 'u8vector send-message (list sock vec start end flags addr)))
     (if (not addr)
 	(raise-socket-exception-if-error (lambda () (c-send sock svec flags)) send-message)
 	(if (not (socket-address? addr))
-	    (##raise-type-exception 3 'socket-address send-message (list sock vec start end flags addr))
+	    (##raise-type-exception 3 (macro-type-sockaddr) send-message (list sock vec start end flags addr))
 	    (raise-socket-exception-if-error (lambda () (c-sendto sock svec flags addr)) send-message)))))
 
 
@@ -516,7 +576,7 @@ if(sa_size > 0) {
 }
 ")))
     (if (not (socket? sock))
-	(##raise-type-exception 0 'socket receive-message (list sock len flags)))
+	(##raise-type-exception 0 (macro-type-socket) receive-message (list sock len flags)))
     (let* ((size-actually-recvd
 	    (raise-socket-exception-if-error (lambda () (c-recvfrom sock vec flags addr)) receive-message)))
       (values
@@ -531,7 +591,7 @@ int soc = ___CAST(int,___INT(___UNCHECKEDSTRUCTUREREF(___arg1,___FIX(1),___SUB(0
 ___result = listen(soc,___arg2);
 ")))
     (if (not (socket? sock))
-	(##raise-type-exception 0 'socket listen-socket (list sock backlog)))
+	(##raise-type-exception 0 (macro-type-socket) listen-socket (list sock backlog)))
     (raise-socket-exception-if-error (lambda () (c-listen sock backlog)) listen-socket)
     (if #f #f)
     ))
@@ -555,7 +615,7 @@ else {
 }
 ")))
     (if (not (socket? sock))
-	(##raise-type-exception 0 'socket socket-local-address (list sock)))
+	(##raise-type-exception 0 (macro-type-socket) socket-local-address (list sock)))
     (raise-socket-exception-if-error (lambda () 
 				       (c-getsockname sock dummy-sockaddr)) socket-local-address)
     (raise-if-sockaddr-alloc-error dummy-sockaddr)))
@@ -579,7 +639,7 @@ else {
 }
 ")))
     (if (not (socket? sock))
-	(##raise-type-exception 0 'socket socket-remote-address (list sock)))
+	(##raise-type-exception 0 (macro-type-socket) socket-remote-address (list sock)))
     (raise-socket-exception-if-error (lambda () 
 				       (c-getpeername sock dummy-sockaddr)) socket-remote-address)
     (raise-if-sockaddr-alloc-error dummy-sockaddr)))
@@ -603,7 +663,7 @@ else {
 }
 ")))
     (if (not (socket? sock))
-	(##raise-type-exception 0 'socket accept-connection (list sock)))
+	(##raise-type-exception 0 (macro-type-socket) accept-connection (list sock)))
     (let* ((s2 
 	    (raise-socket-exception-if-error (lambda () (c-accept sock dummy-sockaddr)) accept-connection)))
       (raise-if-sockaddr-alloc-error dummy-sockaddr)
