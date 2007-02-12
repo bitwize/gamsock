@@ -1,93 +1,37 @@
+; Gamsock -- an enhanced socket library for Gambit built around the Scsh
+; socket API.
+
+; Copyright (c) 2006-2007 by Jeffrey T. Read.
+; Scsh constant files copyright (c) 1993-1994 by Olin Shivers and Brian D.
+; Carlstrom.
+
+; For redistribution conditions, please see the file COPYING.
+
 (c-declare "#include <string.h>")
 (c-declare "#include <stdlib.h>")
 (c-declare "#include <unistd.h>")
+(c-declare "#include <fcntl.h>")
 (c-declare "#include <sys/types.h>")
 (c-declare "#include <sys/socket.h>")
 (c-declare "#include <netinet/in.h>")
 (c-declare "#include <sys/un.h>")
 (c-declare "#include <errno.h>")
 
-(define-macro (define-c-constant var type . const)
-  (let* ((const (if (not (null? const)) (car const) (symbol->string var)))
-	 (str (string-append "___result = " const ";")))
-    `(define ,var ((c-lambda () ,type ,str)))))
+(define-macro (define-enum-constants prefix . constants)
+  (let* ((base (cond
+		  ((string? prefix) prefix)
+		  ((symbol? prefix) (symbol->string prefix))
+		  (else (error "Symbol or string required for define-enum-constants prefix")))))
+    `(begin
+       ,@(map (lambda (x)
+	       `(define ,(string->symbol 
+			  (string-append base "/" (symbol->string (car x))))
+		  ,(cadr x)))
+	     constants))))
 
-(define-macro (define-int-c-constants . var-list)
-  `(begin
-     ,@(map (lambda (x) `(define-c-constant ,x int)) var-list)))
+(include "constants.scm")
 
-; Address families.
-
-(define-c-constant address-family/unspecified int "AF_UNSPEC")
-(define-c-constant address-family/unix int "AF_UNIX")
-(define-c-constant address-family/internet int "AF_INET")
-(define-c-constant address-family/internet6 int "AF_INET6")
-
-; Protocol families.
-
-(define-c-constant protocol-family/unspecified int "PF_UNSPEC")
-(define-c-constant protocol-family/unix int "PF_UNIX")
-(define-c-constant protocol-family/internet int "PF_INET")
-(define-c-constant protocol-family/internet6 int "PF_INET6")
-
-; Socket types.
-
-(define-c-constant socket/stream int "SOCK_STREAM")
-(define-c-constant socket/datagram int "SOCK_DGRAM")
-(define-c-constant socket/raw int "SOCK_RAW")
-
-; Possible error conditions.
-
-(define-c-constant errno/acces int "EACCES")
-(define-c-constant errno/addrinuse int "EADDRINUSE")
-(define-c-constant errno/again int "EAGAIN")
-(define-c-constant errno/badf int "EBADF")
-(define-c-constant errno/inval int "EINVAL")
-(define-c-constant errno/notsock int "ENOTSOCK")
-(define-c-constant errno/fault int "EFAULT")
-(define-c-constant errno/loop int "ELOOP")
-(define-c-constant errno/nametoolong int "ENAMETOOLONG")
-
-(define-c-constant errno/noent int "ENOENT")
-(define-c-constant errno/nomem int "ENOMEM")
-(define-c-constant errno/notdir int "ENOTDIR")
-(define-c-constant errno/rofs int "EROFS")
-(define-c-constant errno/isconn int "EISCONN")
-(define-c-constant errno/inprogress int "EINPROGRESS")
-(define-c-constant errno/intr int "EINTR")
-(define-c-constant errno/netunreach int "ENETUNREACH")
-(define-c-constant errno/timedout int "ETIMEDOUT")
-(define-c-constant errno/already int "EALREADY")
-
-(define-c-constant errno/afnosupport int "EAFNOSUPPORT")
-(define-c-constant errno/notconn int "ENOTCONN")
-(define-c-constant errno/msgsize int "EMSGSIZE")
-(define-c-constant errno/connreset int "ECONNRESET")
-(define-c-constant errno/destaddrreq int "EDESTADDRREQ")
-(define-c-constant errno/wouldblock int "EWOULDBLOCK")
-(define-c-constant errno/opnotsupp int "EOPNOTSUPP")
-(define-c-constant errno/pipe int "EPIPE")
-
-(define-c-constant errno/protonosupport int "EPROTONOSUPPORT")
-(define-c-constant errno/nobufs int "ENOBUFS")
-(define-c-constant errno/connrefused int "ECONNREFUSED")
-(define-c-constant errno/mfile int "EMFILE")
-(define-c-constant errno/nfile int "ENFILE")
-(define-c-constant errno/connaborted int "ECONNABORTED")
-(define-c-constant errno/perm int "EPERM")
-
-
-; Send and recv flags.
-
-(define-c-constant message/out-of-band int "MSG_OOB")
-(define-c-constant message/peek int "MSG_PEEK")
-(define-c-constant message/dont-route int "MSG_DONTROUTE")
-
-; Socket address sizes.
-
-(define-c-constant *sockaddr-un-len* int "sizeof(struct sockaddr_un)")
-(define-c-constant *sockaddr-in-len* int "sizeof(struct sockaddr_in)")
-(define-c-constant *sockaddr-in6-len* int "sizeof(struct sockaddr_in6)")
+; This is the definition of the socket type. It should be treated as opaque.
 
 (define-type socket
   id: 98e94265-558a-d985-b3fe-e67f32458c35
@@ -103,6 +47,8 @@
 
 (implement-type-socket)
 
+; This is the definition of the socket address type.
+
 (define-type sockaddr
   id: ce56103c-c098-5996-21e1-7d200e7e4e6f
   type-exhibitor: macro-type-sockaddr
@@ -116,6 +62,9 @@
   (address unprintable:))
 
 (implement-type-sockaddr)
+
+; This is the definition of an internal type which holds
+; all of the data for an IPv6 address.
 
 (define-type sockaddr-inet6-info
   id: 74065378-a567-ba71-0047-22b413ad9797
@@ -133,7 +82,22 @@
 
 (implement-type-sockaddr-inet6-info)
 
-(c-define (make-empty-sockaddr-inet6-info) () scheme-object "make_empty_sockaddr_inet6_info" "static" (let ((i (macro-make-sockaddr-inet6-info #f #f #f #f))) i))
+(c-define (make-empty-sockaddr-inet6-info) () 
+	  scheme-object
+	  "make_empty_sockaddr_inet6_info"
+	  "static"
+	  (let ((i (macro-make-sockaddr-inet6-info #f #f #f #f))) i))
+
+; Conversion between Scheme sockaddr records and C sockaddr structures of the appropriate
+; type are done with these C helper functions:
+; * build_c_sockaddr(___SCMOBJ theaddr,struct sockaddr *myaddr) -- populates a C struct
+;   sockaddr_un, sockaddr_in, etc. in the area pointed to by `myaddr' with the family
+;   and address data from the Scheme sockaddr referenced by `theaddr'.
+; * c_sockaddr_size(struct sockaddr *myaddr) -- returns the size of the sockaddr struct.
+;   This is determined by the sockaddr's family.
+; * build_scheme_sockaddr(struct sockaddr *myaddr,___SCMOBJ theaddr) -- populates the
+;   Scheme sockaddr record referenced by `theaddr' with family and address data from the
+;   C sockaddr struct pointed to by `myaddr'.
 
 (c-declare #<<c-declare-end
 
@@ -203,7 +167,7 @@ int c_sockaddr_size(struct sockaddr *myaddr) {
   }
 }
 
-int build_scheme_sockaddr(struct sockaddr *myaddr,___SCMOBJ theaddr,int addr_size)
+int build_scheme_sockaddr(struct sockaddr *myaddr,___SCMOBJ theaddr)
 {
   ___SCMOBJ thedata;
   switch(myaddr->sa_family)
@@ -256,7 +220,9 @@ int build_scheme_sockaddr(struct sockaddr *myaddr,___SCMOBJ theaddr,int addr_siz
 c-declare-end
 )
 
-
+; An exception that is raised when you try to access address information
+; from a socket address of the wrong family (e.g., trying to get the IP
+; address of a UNIX socket).
 
 (define-record-type invalid-sockaddr-exception
   (make-invalid-sockaddr-exception n expected-family proc args)
@@ -266,10 +232,17 @@ c-declare-end
   (proc invalid-sockaddr-exception-procedure)
   (args invalid-sockaddr-exception-arguments))
 
+; Socket and socket-address type predicates.
+
 (define (socket-address? obj) (macro-sockaddr? obj))
 (define (socket? obj) (macro-socket? obj))
 
-(define (socket-address-family obj) (macro-sockaddr-family obj))
+; Returns the address family of a socket address.
+
+(define (socket-address-family obj)
+  (if (socket-address? obj)
+      (macro-sockaddr-family obj)
+      (##raise-type-exception 0 (macro-type-sockaddr) socket-address-family (list obj))))
 
 (define (check-sockaddr obj fam n proc args)
   (if (not (socket-address? obj))
@@ -295,26 +268,38 @@ c-declare-end
   (if (sockaddr-alloc-error? a)
       (##raise-heap-overflow-exception)
       a))
+; Converts a "UNIX address" or file name (Shivers named the procedure,
+; not me!) to a socket address for a UNIX socket.
 
 ; This does not yet work with character encodings except ASCII/Latin-1.
 
 (define (unix-address->socket-address fn)
   (let* (
-	 (unix-path-max (- *sockaddr-un-len* 2))
-	 (l (min (string-length fn) (- unix-path-max 1)))
+	 (unix-path-max 108)
+	 (l (string-length fn))
 	 (v (make-u8vector unix-path-max 0))
 	 )
-    (let loop ((i 0))
-      (cond
-       ((>= i l) #f)
-       (else (u8vector-set! v i (remainder (char->integer (string-ref fn i)) 255))
-	     (loop (+ i 1)))))
-    (macro-make-sockaddr address-family/unix v)))
+    (if (>= l unix-path-max)
+	(error "unix-address->socket-address: path too long" fn)
+	(begin
+	  (let loop ((i 0))
+	    (cond
+	     ((>= i l) #f)
+	     (else (u8vector-set!
+		    v i
+		    (remainder (char->integer (string-ref fn i)) 255))
+		   (loop (+ i 1)))))
+	  (macro-make-sockaddr address-family/unix v)))))
+
+; Predicate for UNIX-socket-address-ness.
 
 (define (unix-socket-address? a)
   (and
    (socket-address? a)
    (= (macro-sockaddr-family a) address-family/unix)))
+
+; Given a UNIX socket address, returns the "address" (file name) for the
+; socket.
 
 (define (socket-address->unix-address a)
   (check-sockaddr a address-family/unix 0 socket-address->unix-address (list a))
@@ -355,43 +340,6 @@ c-declare-end
 (define (raise-not-an-ip-address)
   (error "not an ip address"))
 
-(define (consume-ip4-address-component str ptr)
-  (let ((l (string-length str)))
-    (let loop
-	((p ptr)
-	 (s '()))
-      (if (>= p l)
-	  (values (list->string (reverse s)) #f)
-	  (let ((c (string-ref str p)))
-	    (cond
-	     ((char-numeric? c) (loop (+ p 1) (cons c s)))
-	     ((char=? c #\.) (values (list->string (reverse s)) p))
-	     (else (raise-not-an-ip-address))))))))
-
-(define (string->ip4-address str)
-  (let* ((ccheck
-	  (lambda (x)
-	    (let* ((r (string->number x)))
-	      (if (or (not r) (not (integer? r)) (not (exact? r))
-		      (> r 255) (< r 0))
-		  (raise-not-an-ip-address)
-		  r)))))
-    (let loop
-	((ptr 0)
-	 (parts '())
-	 (count 0))
-      (call-with-values (lambda () (consume-ip4-address-component str ptr))
-	(lambda (next nptr)
-	  (cond
-	   ((and nptr (or (>= (+ nptr 1) (string-length str)) 
-			  (not (char-numeric? (string-ref str (+ nptr 1))))))
-	    (raise-not-an-ip-address))
-	   ((and (< count 3) nptr)
-	    (loop (+ nptr 1) (cons (ccheck next) parts) (+ count 1)))
-	   ((and (= count 3) (not nptr))
-	    (apply u8vector (reverse (cons (ccheck next) parts))))
-	   (else (raise-not-an-ip-address))))))))
-
 (define (check-ip4-address v)
   (let* ((e raise-not-an-ip-address))
     (if (not (and (u8vector? v) (= (u8vector-length v) 4))) (e))))
@@ -400,12 +348,16 @@ c-declare-end
   (let* ((e raise-not-an-ip-address))
     (if (not (and (u8vector? v) (= (u8vector-length v) 16))) (e))))
 
+; Some important IPv4 address and port constants.
+
 (define ip-address/any (u8vector 0 0 0 0))
 (define ip-address/loopback (u8vector 127 0 0 1))
 (define ip-address/broadcast (u8vector 255 255 255 255))
 
 (define port/any 0)
 
+; Creates a new IPv4 socket address from a host IP address
+; and port number.
 
 (define (internet-address->socket-address host port)
   (let* ((ip4a (cond
@@ -416,7 +368,12 @@ c-declare-end
     (check-ip4-address ip4a)
     (macro-make-sockaddr address-family/internet (cons port ip4a))))
 
+; IPv4 socket-address predicate.
+
 (define-sockaddr-family-pred internet-socket-address? address-family/internet)
+
+; Returns the address (host and port number as 2 values) of
+; an IPv4 socket address.
 
 (define (socket-address->internet-address a)
   (check-sockaddr a address-family/internet 0 socket-address->internet-address (list a))
@@ -424,11 +381,21 @@ c-declare-end
    (cdr (macro-sockaddr-address a))
    (car (macro-sockaddr-address a))))
 
+; Creates a new IPv6 socket address from a host IP address,
+; port number, flow info and scope ID.
+
 (define (internet6-address->socket-address host port flowinfo scope-id)
   (check-ip6-address host)
   (macro-make-sockaddr
    address-family/internet6
    (macro-make-sockaddr-inet6-info host port flowinfo scope-id)))
+
+; IPv6 socket-address predicate.
+
+(define-sockaddr-family-pred internet6-socket-address? address-family/internet6)
+
+; Returns the IPv6 address info associated with an IPv6
+; socket address.
 
 (define (socket-address->internet6-address a)
   (check-sockaddr a address-family/internet6 0 socket-address->internet-address (list a))
@@ -439,33 +406,49 @@ c-declare-end
      (macro-sockaddr-inet6-info-flowinfo b)
      (macro-sockaddr-inet6-info-scope-id b))))
 
+; Creates a new unspecified socket address.
+
 (define (make-unspecified-socket-address)
   (macro-make-sockaddr address-family/unspecified '()))
 
+; Predicate to test for an unspecified socket address.
+
 (define-sockaddr-family-pred unspecified-socket-address? address-family/unspecified)
+
+; Closes an open socket.
 
 (define (close-socket sock)
   (let* ( (c-close (c-lambda (int) int
 			    "___result = close(___arg1);")))
     (c-close (macro-socket-fd sock))))
 
+; All socket related procedures propagate errors from the operating system
+; by raising a Gambit os-exception with the errno as the exception code.
+
 (define errno (c-lambda () int "___result = errno;"))
 
 (define (raise-socket-exception-if-error thunk proc . args)
-  (let ((b (thunk)))
+  (let loop
+      ((b (thunk)))
     (if (< b 0)
 	(let* ((e (errno)))
-	  (apply
-	   ##raise-os-exception
-	   (append
-	    (list
-	     #f
-	     e
-	     proc
-	     )
-	   args
-	   )))
-	b)))
+	  (if (or
+	       (= e errno/again)
+	       (= e errno/wouldblock)
+	       (= e errno/intr))
+
+	      (loop (thunk))
+	      (apply
+	       ##raise-os-exception
+	       (append
+		(list
+		 #f
+		 e
+		 proc
+		 )
+		args
+		))))
+	  b)))
 
 (define-macro (macro-really-make-socket fd)
   `(let* (
@@ -474,14 +457,25 @@ c-declare-end
 			    (make-will sockobj (lambda (s) (close-socket s))))
     sockobj))
 
+; Creates a new socket of the specified domain (protocol family),
+; type (e.g., stream, datagram), and optional protocol.
+
 (define (create-socket domain type #!optional (protocol 0))
   (let* (
 	 (c-socket (c-lambda (int int int) int
-			     "___result = socket(___arg1,___arg2,___arg3);"))
-	 (sockobj (macro-really-make-socket (raise-socket-exception-if-error
-				      (lambda () (c-socket domain type protocol)) create-socket))))
+			     "
+int s = socket(___arg1,___arg2,___arg3);
+int fl = fcntl(s,F_GETFL);
+fcntl(s,F_SETFL,fl | O_NONBLOCK);
+___result = s;
+"))
+	 (sockobj (macro-really-make-socket
+		   (raise-socket-exception-if-error
+		    (lambda () (c-socket domain type protocol))
+		    create-socket))))
     sockobj))
 
+; Binds a socket to a local address.
 
 (define (bind-socket sock addr)
   (let* ((c-bind (c-lambda (scheme-object scheme-object) int
@@ -500,6 +494,8 @@ ___result = bind(___CAST(int,___INT(___UNCHECKEDSTRUCTUREREF(___arg1,___FIX(1),_
 	    (raise-socket-exception-if-error (lambda () (c-bind sock addr)) bind-socket)))
     (if #f #f)))
 
+; Connects a socket to a remote address.
+
 (define (connect-socket sock addr)
   (let* ((c-connect (c-lambda (scheme-object scheme-object) int
 "
@@ -517,7 +513,12 @@ ___result = connect(___CAST(int,___INT(___UNCHECKEDSTRUCTUREREF(___arg1,___FIX(1
 	    (raise-socket-exception-if-error (lambda () (c-connect sock addr)) connect-socket)))
     (if #f #f)))
 
+; Sends a message on a socket. The message must be a u8vector or, if
+; start and end parameters are given, a slice of the u8vector bound by
+; the start and end params.
 
+; Optional flags and a destination address may also be specified; the latter
+; is only useful for connectionless sockets (e.g., UDP/IP).
 
 (define (send-message sock vec #!optional (start 0) (end #f) (flags 0)
 		      (addr #f))
@@ -556,6 +557,9 @@ ___result = sendto(soc,buf,bufsiz,fl,(struct sockaddr *)&sa,sa_size);
 	    (##raise-type-exception 3 (macro-type-sockaddr) send-message (list sock vec start end flags addr))
 	    (raise-socket-exception-if-error (lambda () (c-sendto sock svec flags addr)) send-message)))))
 
+; Receives a message from a socket of a given length and returns it as a
+; u8vector. Optional flags may be specified. This procedure actually returns
+; two values: the received message and the source address.
 
 (define (receive-message sock len #!optional (flags 0))
   (let* (
@@ -572,7 +576,7 @@ size_t bufsiz = ___CAST(size_t,___INT(___U8VECTORLENGTH(___arg2)));
 int fl = ___CAST(int,___INT(___arg3));
 ___result = recvfrom(soc,buf,bufsiz,fl,(struct sockaddr *)&sa,&sa_size);
 if(sa_size > 0) {
-  build_scheme_sockaddr((struct sockaddr *)&sa,___arg4,sa_size);
+  build_scheme_sockaddr((struct sockaddr *)&sa,___arg4);
 }
 ")))
     (if (not (socket? sock))
@@ -582,6 +586,9 @@ if(sa_size > 0) {
       (values
        (subu8vector vec 0 size-actually-recvd)
        addr))))
+
+; Sets up a socket to listen for incoming connections, with the specified number
+; of backlogged connections allowed.
 
 (define (listen-socket sock backlog)
   (let* ((c-listen
@@ -595,6 +602,8 @@ ___result = listen(soc,___arg2);
     (raise-socket-exception-if-error (lambda () (c-listen sock backlog)) listen-socket)
     (if #f #f)
     ))
+
+; Returns the local socket address of the socket.
 
 (define (socket-local-address sock) 
   (let* (
@@ -610,7 +619,7 @@ if(r<0) {
    ___result = r;
 }
 else {
-   build_scheme_sockaddr((struct sockaddr *)&ss,___arg2,sslen);
+   build_scheme_sockaddr((struct sockaddr *)&ss,___arg2);
    ___result = r;
 }
 ")))
@@ -619,6 +628,8 @@ else {
     (raise-socket-exception-if-error (lambda () 
 				       (c-getsockname sock dummy-sockaddr)) socket-local-address)
     (raise-if-sockaddr-alloc-error dummy-sockaddr)))
+
+; Returns the remote socket address of a socket.
 
 (define (socket-remote-address sock) 
   (let* (
@@ -634,7 +645,7 @@ if(r<0) {
    ___result = r;
 }
 else {
-   build_scheme_sockaddr((struct sockaddr *)&ss,___arg2,sslen);
+   build_scheme_sockaddr((struct sockaddr *)&ss,___arg2);
    ___result = r;
 }
 ")))
@@ -643,6 +654,9 @@ else {
     (raise-socket-exception-if-error (lambda () 
 				       (c-getpeername sock dummy-sockaddr)) socket-remote-address)
     (raise-if-sockaddr-alloc-error dummy-sockaddr)))
+
+; Accepts a connection on a socket. Returns two values: a new socket corresponding to
+; the connection, and the address of the other side of the connection.
 
 (define (accept-connection sock) 
   (let* (
@@ -658,7 +672,9 @@ if(r < 0) {
    ___result = r;
 }
 else {
-   build_scheme_sockaddr((struct sockaddr *)&ss,___arg2,sslen);
+   build_scheme_sockaddr((struct sockaddr *)&ss,___arg2);
+   int fl = fcntl(r,F_GETFL);
+   fcntl(r,F_SETFL,fl | O_NONBLOCK);
    ___result = r;
 }
 ")))
@@ -668,4 +684,3 @@ else {
 	    (raise-socket-exception-if-error (lambda () (c-accept sock dummy-sockaddr)) accept-connection)))
       (raise-if-sockaddr-alloc-error dummy-sockaddr)
       (values (macro-really-make-socket s2) dummy-sockaddr))))
-

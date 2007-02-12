@@ -1,0 +1,15 @@
+This is Gamsock, a sockets library for Gambit with an API that closely
+corresponds with scsh's socket API. It was written by Jeffrey T. Read
+<bitwize@gmail.com> and released under the license terms as given in the
+file COPYING (basically, the same as scsh's license).
+
+To build, assuming your gambit is in /usr/local/Gambit-C/current/bin:
+
+./build-gamsock.sh
+
+Then you can do a (load "gamsock.o1") and all should be well.
+
+Stay tuned for future versions, with special guest stars: socket options, and
+database info (DNS, protocol names, etc.)! Keep those bug reports coming!
+
+--Jeff
