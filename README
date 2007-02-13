@@ -5,7 +5,7 @@ file COPYING (basically, the same as scsh's license).
 
 To build, assuming your gambit is in /usr/local/Gambit-C/current/bin:
 
-./build-gamsock.sh
+sh ./build-gamsock.sh
 
 Then you can do a (load "gamsock.o1") and all should be well.
 

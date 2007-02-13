@@ -86,7 +86,7 @@
 	  scheme-object
 	  "make_empty_sockaddr_inet6_info"
 	  "static"
-	  (let ((i (macro-make-sockaddr-inet6-info #f #f #f #f))) i))
+	  (macro-make-sockaddr-inet6-info #f #f #f #f))
 
 ; Conversion between Scheme sockaddr records and C sockaddr structures of the appropriate
 ; type are done with these C helper functions:
@@ -360,9 +360,7 @@ c-declare-end
 ; and port number.
 
 (define (internet-address->socket-address host port)
-  (let* ((ip4a (cond
-		((u8vector? host) host)
-		((string? host) (string->ip4-address host))))
+  (let* ((ip4a host)
 	 (pv (integer->network-order-vector-16 port)))
 	 
     (check-ip4-address ip4a)
