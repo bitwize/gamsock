@@ -6,16 +6,24 @@
 ; Carlstrom.
 
 ; For redistribution conditions, please see the file COPYING.
+(include "gamsock-headers.scm")
 
-(c-declare "#include <string.h>")
-(c-declare "#include <stdlib.h>")
-(c-declare "#include <unistd.h>")
-(c-declare "#include <fcntl.h>")
-(c-declare "#include <sys/types.h>")
-(c-declare "#include <sys/socket.h>")
-(c-declare "#include <netinet/in.h>")
-(c-declare "#include <sys/un.h>")
-(c-declare "#include <errno.h>")
+(define-macro (define-c-constant var type . const)
+  (let* ((const (if (not (null? const)) (car const) (symbol->string var)))
+	 (str (string-append "___result = " const ";")))
+    `(define ,var ((c-lambda () ,type ,str)))))
+
+(define-macro (define-int-c-constants prefix . constants)
+  (let* ((base (cond
+		((string? prefix) prefix)
+		((symbol? prefix) (symbol->string prefix))
+		(else (error "Symbol or string required for define-enum-constants prefix")))))
+    `(begin
+       ,@(map (lambda (x)
+		`(define-c-constant
+		   ,(string->symbol
+		     (string-append base "/" (symbol->string (car x))))
+		   int ,(cadr x))) constants))))
 
 (define-macro (define-enum-constants prefix . constants)
   (let* ((base (cond
@@ -29,7 +37,8 @@
 		  ,(cadr x)))
 	     constants))))
 
-(include "constants.scm")
+
+(include "gamsock-constants.scm")
 
 ; This is the definition of the socket type. It should be treated as opaque.
 
@@ -101,13 +110,13 @@
 
 (c-declare #<<c-declare-end
 
-#define ___SOCKADDR_FAM(x) ___UNCHECKEDSTRUCTUREREF(x,___FIX(1),___SUB(0),___FAL)
-#define ___SOCKADDR_DATA(x) ___UNCHECKEDSTRUCTUREREF(x,___FIX(2),___SUB(0),___FAL)
+#define ___SOCKADDR_FAM(x) ___UNCHECKEDSTRUCTUREREF(x,___FIX(1L),___SUB(0),___FAL)
+#define ___SOCKADDR_DATA(x) ___UNCHECKEDSTRUCTUREREF(x,___FIX(2L),___SUB(0),___FAL)
 
-#define ___INET6_INFO_HOST(x) ___UNCHECKEDSTRUCTUREREF(x,___FIX(1),___SUB(0),___FAL)
-#define ___INET6_INFO_PORT(x) ___UNCHECKEDSTRUCTUREREF(x,___FIX(2),___SUB(0),___FAL)
-#define ___INET6_INFO_FLOWINFO(x) ___UNCHECKEDSTRUCTUREREF(x,___FIX(3),___SUB(0),___FAL)
-#define ___INET6_INFO_SCOPEID(x) ___UNCHECKEDSTRUCTUREREF(x,___FIX(4),___SUB(0),___FAL)
+#define ___INET6_INFO_HOST(x) ___UNCHECKEDSTRUCTUREREF(x,___FIX(1L),___SUB(0),___FAL)
+#define ___INET6_INFO_PORT(x) ___UNCHECKEDSTRUCTUREREF(x,___FIX(2L),___SUB(0),___FAL)
+#define ___INET6_INFO_FLOWINFO(x) ___UNCHECKEDSTRUCTUREREF(x,___FIX(3L),___SUB(0),___FAL)
+#define ___INET6_INFO_SCOPEID(x) ___UNCHECKEDSTRUCTUREREF(x,___FIX(4L),___SUB(0),___FAL)
 
 
 int build_c_sockaddr(___SCMOBJ theaddr,struct sockaddr *myaddr)
@@ -422,6 +431,8 @@ c-declare-end
 
 ; All socket related procedures propagate errors from the operating system
 ; by raising a Gambit os-exception with the errno as the exception code.
+; The exceptions are EAGAIN, EWOULDBLOCK, and EINTR; all of which
+; simply retry the operation until it's successful or raises another error.
 
 (define errno (c-lambda () int "___result = errno;"))
 
@@ -434,8 +445,9 @@ c-declare-end
 	       (= e errno/again)
 	       (= e errno/wouldblock)
 	       (= e errno/intr))
-
-	      (loop (thunk))
+	      (begin
+		(thread-yield!) ; to avoid tying up the CPU
+		(loop (thunk)))
 	      (apply
 	       ##raise-os-exception
 	       (append
@@ -567,7 +579,7 @@ ___result = sendto(soc,buf,bufsiz,fl,(struct sockaddr *)&sa,sa_size);
 	  (c-lambda (scheme-object scheme-object int scheme-object) int
 		    "
 struct sockaddr_storage sa;
-int sa_size;
+socklen_t sa_size;
 int soc = ___CAST(int,___INT(___UNCHECKEDSTRUCTUREREF(___arg1,___FIX(1),___SUB(0),___FAL)));
 void *buf = ___CAST(void *,___BODY_AS(___arg2,___tSUBTYPED));
 size_t bufsiz = ___CAST(size_t,___INT(___U8VECTORLENGTH(___arg2)));
@@ -610,7 +622,7 @@ ___result = listen(soc,___arg2);
 	  (c-lambda (scheme-object scheme-object) int
 		    "
 struct sockaddr_storage ss;
-int sslen = sizeof(struct sockaddr_storage);
+socklen_t sslen = sizeof(struct sockaddr_storage);
 int soc = ___CAST(int,___INT(___UNCHECKEDSTRUCTUREREF(___arg1,___FIX(1),___SUB(0),___FAL)));
 int r = getsockname(soc,(struct sockaddr *)&ss,&sslen);
 if(r<0) {
@@ -636,7 +648,7 @@ else {
 	  (c-lambda (scheme-object scheme-object) int
 		    "
 struct sockaddr_storage ss;
-int sslen = sizeof(struct sockaddr_storage);
+socklen_t sslen = sizeof(struct sockaddr_storage);
 int soc = ___CAST(int,___INT(___UNCHECKEDSTRUCTUREREF(___arg1,___FIX(1),___SUB(0),___FAL)));
 int r = getpeername(soc,(struct sockaddr *)&ss,&sslen);
 if(r<0) {
@@ -663,7 +675,7 @@ else {
 	  (c-lambda (scheme-object scheme-object) int
 		    "
 struct sockaddr_storage ss;
-int sslen = sizeof(struct sockaddr_storage);
+socklen_t sslen = sizeof(struct sockaddr_storage);
 int soc = ___CAST(int,___INT(___UNCHECKEDSTRUCTUREREF(___arg1,___FIX(1),___SUB(0),___FAL)));
 int r = accept(soc,(struct sockaddr *)&ss,&sslen);
 if(r < 0) {
@@ -682,3 +694,273 @@ else {
 	    (raise-socket-exception-if-error (lambda () (c-accept sock dummy-sockaddr)) accept-connection)))
       (raise-if-sockaddr-alloc-error dummy-sockaddr)
       (values (macro-really-make-socket s2) dummy-sockaddr))))
+
+(define (boolean-socket-option? optname)
+  (member optname boolean-socket-options))
+(define (integer-socket-option? optname)
+  (member optname integer-socket-options))
+(define (timeout-socket-option? optname)
+  (member optname timeout-socket-options))
+
+; ### Socket Option Getters ###
+
+(define (do-boolean-socket-option socket level optname)
+  (let (
+	(v (make-vector 1))
+	(c-do-boolean-socket-option
+	  (c-lambda (scheme-object int int scheme-object) int
+		    "
+int optval = 0;
+socklen_t optlen = sizeof(optval);
+int r;
+int soc = ___CAST(int,___INT(___UNCHECKEDSTRUCTUREREF(___arg1,___FIX(1),___SUB(0),___FAL)));
+r = getsockopt(soc,___arg2,___arg3,&optval,&optlen);
+___VECTORSET(___arg4,___FIX(0L),___FIX(optval));
+___result = r;
+")))
+    (if (not (socket? socket))
+	(##raise-type-exception 0
+				(macro-type-socket)
+				socket-option
+				(list socket level optname)))
+    (if (not (integer? level))
+	(##raise-type-exception 1
+				'integer
+				socket-option
+				(list socket level optname)))
+    (if (not (integer? optname))
+	(##raise-type-exception 2
+				'integer
+				socket-option
+				(list socket level optname)))
+    (raise-socket-exception-if-error
+     (lambda () (c-do-boolean-socket-option socket
+					    level
+					    optname
+					    v)) socket-option)
+    (not (zero? (vector-ref v 0)))))
+
+(define (do-integer-socket-option socket level optname)
+  (let (
+	(v (make-vector 1))
+	(c-do-integer-socket-option
+	  (c-lambda (scheme-object int int scheme-object) int
+		    "
+int optval = 0;
+socklen_t optlen = sizeof(optval);
+int r;
+int soc = ___CAST(int,___INT(___UNCHECKEDSTRUCTUREREF(___arg1,___FIX(1),___SUB(0),___FAL)));
+r = getsockopt(soc,___arg2,___arg3,&optval,&optlen);
+___VECTORSET(___arg4,___FIX(0L),___FIX(optval));
+___result = r;
+")))
+    (if (not (socket? socket))
+	(##raise-type-exception 0
+				(macro-type-socket)
+				socket-option
+				(list socket level optname)))
+    (if (not (integer? level))
+	(##raise-type-exception 1
+				'integer
+				socket-option
+				(list socket level optname)))
+    (if (not (integer? optname))
+	(##raise-type-exception 2
+				'integer
+				socket-option
+				(list socket level optname)))
+    (raise-socket-exception-if-error
+     (lambda () (c-do-integer-socket-option socket
+					    level
+					    optname
+					    v)) socket-option)
+    (vector-ref v 0)))
+
+(define (do-timeout-socket-option socket level optname)
+  (let (
+	(v (make-vector 2))
+	(c-do-integer-socket-option
+	  (c-lambda (scheme-object int int scheme-object) int
+		    "
+struct timeval optval;
+socklen_t optlen = sizeof(optval);
+int r;
+int soc = ___CAST(int,___INT(___UNCHECKEDSTRUCTUREREF(___arg1,___FIX(1),___SUB(0),___FAL)));
+r = getsockopt(soc,___arg2,___arg3,&optval,&optlen);
+___VECTORSET(___arg4,___FIX(0L),___FIX(optval.tv_sec));
+___VECTORSET(___arg4,___FIX(1L),___FIX(optval.tv_usec));
+___result = r;
+")))
+    (if (not (socket? socket))
+	(##raise-type-exception 0
+				(macro-type-socket)
+				socket-option
+				(list socket level optname)))
+    (if (not (integer? level))
+	(##raise-type-exception 1
+				'integer
+				socket-option
+				(list socket level optname)))
+    (if (not (integer? optname))
+	(##raise-type-exception 2
+				'integer
+				socket-option
+				(list socket level optname)))
+    (raise-socket-exception-if-error
+     (lambda () (c-do-integer-socket-option socket
+					    level
+					    optname
+					    v)) socket-option)
+    (+
+     (vector-ref v 0)
+     (/ (vector-ref v 1) 1000000.0))))
+
+(define (socket-option socket level optname)
+  (cond
+   ((boolean-socket-option? optname)
+    (do-boolean-socket-option socket level optname))
+   ((integer-socket-option? optname)
+    (do-integer-socket-option socket level optname))
+   ((timeout-socket-option? optname)
+    (do-timeout-socket-option socket level optname))
+   (else
+    (error "unsupported socket option"))))
+
+; ### Socket option setters ###
+(define (do-boolean-set-socket-option socket level optname optval)
+  (let (
+	(c-do-boolean-set-socket-option
+	  (c-lambda (scheme-object int int scheme-object) int
+		    "
+int optval = 0;
+socklen_t optlen = sizeof(optval);
+int r;
+int soc = ___CAST(int,___INT(___UNCHECKEDSTRUCTUREREF(___arg1,___FIX(1),___SUB(0),___FAL)));
+if(___arg4 != ___FAL)
+{
+  optval = 1;
+}
+else
+{
+ optval = 0;
+}
+r = setsockopt(soc,___arg2,___arg3,&optval,optlen);
+___result = r;
+")))
+    (if (not (socket? socket))
+	(##raise-type-exception 0
+				(macro-type-socket)
+				socket-option
+				(list socket level optname optval)))
+    (if (not (integer? level))
+	(##raise-type-exception 1
+				'integer
+				socket-option
+				(list socket level optname optval)))
+    (if (not (integer? optname))
+	(##raise-type-exception 2
+				'integer
+				socket-option
+				(list socket level optname optval)))
+    (raise-socket-exception-if-error
+     (lambda () (c-do-boolean-set-socket-option socket
+					    level
+					    optname
+					    optval)) socket-option)
+    #!void))
+
+(define (do-integer-set-socket-option socket level optname optval)
+  (let (
+	(c-do-integer-set-socket-option
+	  (c-lambda (scheme-object int int int) int
+		    "
+int optval = ___arg4;
+socklen_t optlen = sizeof(optval);
+int r;
+int soc = ___CAST(int,___INT(___UNCHECKEDSTRUCTUREREF(___arg1,___FIX(1),___SUB(0),___FAL)));
+r = setsockopt(soc,___arg2,___arg3,&optval,optlen);
+___result = r;
+")))
+    (if (not (socket? socket))
+	(##raise-type-exception 0
+				(macro-type-socket)
+				socket-option
+				(list socket level optname optval)))
+    (if (not (integer? level))
+	(##raise-type-exception 1
+				'integer
+				socket-option
+				(list socket level optname optval)))
+    (if (not (integer? optname))
+	(##raise-type-exception 2
+				'integer
+				socket-option
+				(list socket level optname optval)))
+    (if (not (integer? optval))
+	(##raise-type-exception 3
+				'integer
+				socket-option
+				(list socket level optname optval)))
+    (raise-socket-exception-if-error
+     (lambda () (c-do-integer-set-socket-option socket
+					    level
+					    optname
+					    optval)) socket-option)
+    #!void))
+
+(define (do-timeout-set-socket-option socket level optname optval)
+  (let (
+	(c-do-timeout-set-socket-option
+	  (c-lambda (scheme-object int int int int) int
+		    "
+struct timeval optval;
+socklen_t optlen = sizeof(optval);
+int r;
+int soc = ___CAST(int,___INT(___UNCHECKEDSTRUCTUREREF(___arg1,___FIX(1),___SUB(0),___FAL)));
+optval.tv_sec = ___arg4;
+optval.tv_usec = ___arg5;
+r = setsockopt(soc,___arg2,___arg3,&optval,optlen);
+___result = r;
+")))
+    (if (not (socket? socket))
+	(##raise-type-exception 0
+				(macro-type-socket)
+				socket-option
+				(list socket level optname optval)))
+    (if (not (integer? level))
+	(##raise-type-exception 1
+				'integer
+				socket-option
+				(list socket level optname optval)))
+    (if (not (integer? optname))
+	(##raise-type-exception 2
+				'integer
+				socket-option
+				(list socket level optname optval)))
+    (if (not (real? optval))
+	(##raise-type-exception 3
+				'integer
+				socket-option
+				(list socket level optname optval)))
+    (let* ((sec (inexact->exact (truncate optval)))
+	   (usec (inexact->exact (truncate (* (- optval sec) 1000000.)))))
+      (raise-socket-exception-if-error
+       (lambda () (c-do-timeout-set-socket-option socket
+						  level
+						  optname
+						  sec
+					    usec)) socket-option))
+    #!void))
+
+
+(define (set-socket-option socket level optname optval)
+  (cond
+   ((boolean-socket-option? optname)
+    (do-boolean-set-socket-option socket level optname optval))
+   ((integer-socket-option? optname)
+    (do-integer-set-socket-option socket level optname optval))
+   ((timeout-socket-option? optname)
+    (do-timeout-set-socket-option socket level optname optval))
+   (else
+    (error "unsupported socket option"))))
+
