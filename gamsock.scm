@@ -255,8 +255,7 @@ c-declare-end
 
 (define (check-sockaddr obj fam n proc args)
   (if (not (socket-address? obj))
-      (##raise-type-exception n (macro-type-sockaddr) proc args)
-      )
+      (##raise-type-exception n (macro-type-sockaddr) proc args))
   (if (not (= (macro-sockaddr-family obj) fam))
       (raise (make-invalid-sockaddr-exception n fam proc args))))
 
@@ -422,13 +421,6 @@ c-declare-end
 
 (define-sockaddr-family-pred unspecified-socket-address? address-family/unspecified)
 
-; Closes an open socket.
-
-(define (close-socket sock)
-  (let* ( (c-close (c-lambda (int) int
-			    "___result = close(___arg1);")))
-    (c-close (macro-socket-fd sock))))
-
 ; All socket related procedures propagate errors from the operating system
 ; by raising a Gambit os-exception with the errno as the exception code.
 ; The exceptions are EAGAIN, EWOULDBLOCK, and EINTR; all of which
@@ -467,61 +459,235 @@ c-declare-end
 			    (make-will sockobj (lambda (s) (close-socket s))))
     sockobj))
 
-; Creates a new socket of the specified domain (protocol family),
-; type (e.g., stream, datagram), and optional protocol.
+; These are C wrappers for the socket-related system calls exposed by gamsock.
+; They are kept in a private namespace "gamsock-c#". MESSING WITH THEM IS BAD
+; JUJU as their exact interfaces are likely to change. Gamsock's external
+; interface is likely to be stable, leaving our internals to be AS MESSY AS
+; WE WANNA BE.
 
-(define (create-socket domain type #!optional (protocol 0))
-  (let* (
-	 (c-socket (c-lambda (int int int) int
-			     "
+(namespace ("gamsock-c#" c-socket c-bind c-connect c-send c-sendto c-recvfrom
+	    c-listen c-accept c-do-boolean-socket-option
+	    c-do-integer-socket-option c-do-timeout-socket-option
+	    c-do-boolean-set-socket-option c-do-integer-set-socket-option
+	    c-do-timeout-set-socket-option c-close))
+(define 
+  c-socket
+  (c-lambda (int int int) int #<<C-END
 int s = socket(___arg1,___arg2,___arg3);
 int fl = fcntl(s,F_GETFL);
 fcntl(s,F_SETFL,fl | O_NONBLOCK);
 ___result = s;
-"))
-	 (sockobj (macro-really-make-socket
-		   (raise-socket-exception-if-error
-		    (lambda () (c-socket domain type protocol))
-		    create-socket))))
-    sockobj))
+C-END
+))
 
-; Binds a socket to a local address.
-
-(define (bind-socket sock addr)
-  (let* ((c-bind (c-lambda (scheme-object scheme-object) int
-"
+(define c-bind
+  (c-lambda (scheme-object scheme-object) int #<<C-END
 int mysize;
 struct sockaddr_storage myaddr;
 build_c_sockaddr(___arg2,(struct sockaddr *)&myaddr);
 mysize = c_sockaddr_size((struct sockaddr *)&myaddr);
 ___result = bind(___CAST(int,___INT(___UNCHECKEDSTRUCTUREREF(___arg1,___FIX(1),___SUB(0),___FAL))),(struct sockaddr *)&myaddr,mysize);
-"
-)))
-    (if (not (socket? sock))
-	(##raise-type-exception 0 (macro-type-socket) bind-socket (list sock addr))
-	(if (not (socket-address? addr))
-	    (##raise-type-exception 1 (macro-type-sockaddr) bind-socket (list sock addr))
-	    (raise-socket-exception-if-error (lambda () (c-bind sock addr)) bind-socket)))
-    (if #f #f)))
+C-END
+))
 
-; Connects a socket to a remote address.
-
-(define (connect-socket sock addr)
-  (let* ((c-connect (c-lambda (scheme-object scheme-object) int
-"
+(define c-connect (c-lambda (scheme-object scheme-object) int #<<C-END
 int mysize;
 struct sockaddr_storage myaddr;
 build_c_sockaddr(___arg2,(struct sockaddr *)&myaddr);
 mysize = c_sockaddr_size((struct sockaddr *)&myaddr);
-___result = connect(___CAST(int,___INT(___UNCHECKEDSTRUCTUREREF(___arg1,___FIX(1),___SUB(0),___FAL))),(struct sockaddr *)&myaddr,mysize);
-"
-)))
+___result = connect(___CAST(int,
+                            ___INT(___UNCHECKEDSTRUCTUREREF(___arg1,___FIX(1),
+                                                            ___SUB(0),___FAL))),
+                    (struct sockaddr *)&myaddr,mysize);
+C-END
+))
+(define c-send
+  (c-lambda (scheme-object scheme-object int) int #<<C-END
+int soc = ___CAST(int,___INT(___UNCHECKEDSTRUCTUREREF(___arg1,___FIX(1),___SUB(0),___FAL)));
+void *buf = ___CAST(void *,___BODY_AS(___arg2,___tSUBTYPED));
+size_t bufsiz = ___CAST(size_t,___INT(___U8VECTORLENGTH(___arg2)));
+int fl = ___CAST(int,___INT(___arg3));
+___result = send(soc,buf,bufsiz,fl);
+C-END
+))
+(define c-sendto
+  (c-lambda (scheme-object scheme-object int scheme-object) int #<<C-END
+struct sockaddr_storage sa;
+int sa_size;
+int soc = ___CAST(int,___INT(___UNCHECKEDSTRUCTUREREF(___arg1,___FIX(1),
+                                                      ___SUB(0),___FAL)));
+void *buf = ___CAST(void *,___BODY_AS(___arg2,___tSUBTYPED));
+size_t bufsiz = ___CAST(size_t,___INT(___U8VECTORLENGTH(___arg2)));
+int fl = ___CAST(int,___INT(___arg3));
+build_c_sockaddr(___arg4,(struct sockaddr *)&sa);
+sa_size = c_sockaddr_size((struct sockaddr *)&sa);
+___result = sendto(soc,buf,bufsiz,fl,(struct sockaddr *)&sa,sa_size);
+C-END
+))
+
+(define c-recvfrom
+  (c-lambda (scheme-object scheme-object int scheme-object) int #<<C-END
+struct sockaddr_storage sa;
+socklen_t sa_size;
+int soc = ___CAST(int,___INT(___UNCHECKEDSTRUCTUREREF(___arg1,___FIX(1),
+                                                      ___SUB(0),___FAL)));
+void *buf = ___CAST(void *,___BODY_AS(___arg2,___tSUBTYPED));
+size_t bufsiz = ___CAST(size_t,___INT(___U8VECTORLENGTH(___arg2)));
+int fl = ___CAST(int,___INT(___arg3));
+___result = recvfrom(soc,buf,bufsiz,fl,(struct sockaddr *)&sa,&sa_size);
+if(sa_size > 0) {
+  build_scheme_sockaddr((struct sockaddr *)&sa,___arg4);
+}
+C-END
+))
+(define c-listen
+  (c-lambda (scheme-object int) int #<<C-END
+int soc = ___CAST(int,___INT(___UNCHECKEDSTRUCTUREREF(___arg1,___FIX(1),
+                                                      ___SUB(0),___FAL)));
+___result = listen(soc,___arg2);
+C-END
+))
+
+(define c-accept
+  (c-lambda (scheme-object scheme-object) int #<<C-END
+struct sockaddr_storage ss;
+socklen_t sslen = sizeof(struct sockaddr_storage);
+int soc = ___CAST(int,___INT(___UNCHECKEDSTRUCTUREREF(___arg1,___FIX(1),___SUB(0),___FAL)));
+int r = accept(soc,(struct sockaddr *)&ss,&sslen);
+if(r < 0) {
+   ___result = r;
+}
+else {
+   build_scheme_sockaddr((struct sockaddr *)&ss,___arg2);
+   int fl = fcntl(r,F_GETFL);
+   fcntl(r,F_SETFL,fl | O_NONBLOCK);
+   ___result = r;
+}
+C-END
+))
+
+
+(define c-do-boolean-socket-option
+  (c-lambda (scheme-object int int scheme-object) int #<<C-END
+int optval = 0;
+socklen_t optlen = sizeof(optval);
+int r;
+int soc = ___CAST(int,___INT(___UNCHECKEDSTRUCTUREREF(___arg1,___FIX(1),___SUB(0),___FAL)));
+r = getsockopt(soc,___arg2,___arg3,&optval,&optlen);
+___VECTORSET(___arg4,___FIX(0L),___FIX(optval));
+___result = r;
+C-END
+))
+(define c-do-integer-socket-option
+  (c-lambda (scheme-object int int scheme-object) int #<<C-END
+int optval = 0;
+socklen_t optlen = sizeof(optval);
+int r;
+int soc = ___CAST(int,___INT(___UNCHECKEDSTRUCTUREREF(___arg1,___FIX(1),___SUB(0),___FAL)));
+r = getsockopt(soc,___arg2,___arg3,&optval,&optlen);
+___VECTORSET(___arg4,___FIX(0L),___FIX(optval));
+___result = r;
+C-END
+))
+
+(define c-do-timeout-socket-option
+ (c-lambda (scheme-object int int scheme-object) int #<<C-END
+struct timeval optval;
+socklen_t optlen = sizeof(optval);
+int r;
+int soc = ___CAST(int,___INT(___UNCHECKEDSTRUCTUREREF(___arg1,___FIX(1),___SUB(0),___FAL)));
+r = getsockopt(soc,___arg2,___arg3,&optval,&optlen);
+___VECTORSET(___arg4,___FIX(0L),___FIX(optval.tv_sec));
+___VECTORSET(___arg4,___FIX(1L),___FIX(optval.tv_usec));
+___result = r;
+C-END
+))
+
+(define c-do-boolean-set-socket-option
+ (c-lambda (scheme-object int int scheme-object) int #<<C-END
+int optval = 0;
+socklen_t optlen = sizeof(optval);
+int r;
+int soc = ___CAST(int,___INT(___UNCHECKEDSTRUCTUREREF(___arg1,___FIX(1),___SUB(0),___FAL)));
+if(___arg4 != ___FAL)
+{
+  optval = 1;
+}
+else
+{
+ optval = 0;
+}
+r = setsockopt(soc,___arg2,___arg3,&optval,optlen);
+___result = r;
+C-END
+))
+
+(define c-do-integer-set-socket-option
+  (c-lambda (scheme-object int int int) int #<<C-END
+int optval = ___arg4;
+socklen_t optlen = sizeof(optval);
+int r;
+int soc = ___CAST(int,___INT(___UNCHECKEDSTRUCTUREREF(___arg1,___FIX(1),___SUB(0),___FAL)));
+r = setsockopt(soc,___arg2,___arg3,&optval,optlen);
+___result = r;
+C-END
+))
+
+(define c-do-timeout-set-socket-option
+  (c-lambda (scheme-object int int int int) int #<<C-END
+struct timeval optval;
+socklen_t optlen = sizeof(optval);
+int r;
+int soc = ___CAST(int,___INT(___UNCHECKEDSTRUCTUREREF(___arg1,___FIX(1),___SUB(0),___FAL)));
+optval.tv_sec = ___arg4;
+optval.tv_usec = ___arg5;
+r = setsockopt(soc,___arg2,___arg3,&optval,optlen);
+___result = r;
+C-END
+))
+
+(define c-close
+  (c-lambda (int) int "___result = close(___arg1);"))
+
+
+; GAMSOCK API begins here.
+; Closes an open socket.
+
+(define (close-socket sock)
+    (c-close (macro-socket-fd sock)))
+
+; Creates a new socket of the specified domain (protocol family),
+; type (e.g., stream, datagram), and optional protocol.
+
+(define (create-socket domain type #!optional (protocol 0))
+  (macro-really-make-socket
+   (raise-socket-exception-if-error
+    (lambda () (c-socket domain type protocol))
+    create-socket)))
+
+; Binds a socket to a local address.
+
+(define (bind-socket sock addr)
+    (if (not (socket? sock))
+	(##raise-type-exception 
+	 0 (macro-type-socket) bind-socket (list sock addr))
+	(if (not (socket-address? addr))
+	    (##raise-type-exception
+	     1 (macro-type-sockaddr) bind-socket (list sock addr))
+	    (raise-socket-exception-if-error
+	     (lambda () (c-bind sock addr)) bind-socket)))
+    (if #f #f))
+
+; Connects a socket to a remote address.
+
+(define (connect-socket sock addr)
+
     (if (not (socket? sock))
 	(##raise-type-exception 0 (macro-type-socket) connect-socket (list sock addr))
 	(if (not (socket-address? addr))
 	    (##raise-type-exception 1 (macro-type-sockaddr) connect-socket (list sock addr))
 	    (raise-socket-exception-if-error (lambda () (c-connect sock addr)) connect-socket)))
-    (if #f #f)))
+    (if #f #f))
 
 ; Sends a message on a socket. The message must be a u8vector or, if
 ; start and end parameters are given, a slice of the u8vector bound by
@@ -532,31 +698,11 @@ ___result = connect(___CAST(int,___INT(___UNCHECKEDSTRUCTUREREF(___arg1,___FIX(1
 
 (define (send-message sock vec #!optional (start 0) (end #f) (flags 0)
 		      (addr #f))
-  (let* (
-	 (svec (if (and (= start 0) (not end)) vec
-		   (subu8vector vec start (if (not end) (u8vector-length vec) end))))
-	 (c-send
-	  (c-lambda (scheme-object scheme-object int) int
-		    "
-int soc = ___CAST(int,___INT(___UNCHECKEDSTRUCTUREREF(___arg1,___FIX(1),___SUB(0),___FAL)));
-void *buf = ___CAST(void *,___BODY_AS(___arg2,___tSUBTYPED));
-size_t bufsiz = ___CAST(size_t,___INT(___U8VECTORLENGTH(___arg2)));
-int fl = ___CAST(int,___INT(___arg3));
-___result = send(soc,buf,bufsiz,fl);
-"))
-	 (c-sendto
-	  (c-lambda (scheme-object scheme-object int scheme-object) int
-		    "
-struct sockaddr_storage sa;
-int sa_size;
-int soc = ___CAST(int,___INT(___UNCHECKEDSTRUCTUREREF(___arg1,___FIX(1),___SUB(0),___FAL)));
-void *buf = ___CAST(void *,___BODY_AS(___arg2,___tSUBTYPED));
-size_t bufsiz = ___CAST(size_t,___INT(___U8VECTORLENGTH(___arg2)));
-int fl = ___CAST(int,___INT(___arg3));
-build_c_sockaddr(___arg4,(struct sockaddr *)&sa);
-sa_size = c_sockaddr_size((struct sockaddr *)&sa);
-___result = sendto(soc,buf,bufsiz,fl,(struct sockaddr *)&sa,sa_size);
-")))
+  (let ((svec (if (and (= start 0) (not end)) vec
+		   (subu8vector vec
+				start 
+				(if (not end) (u8vector-length vec) end)))))
+
     (if (not (socket? sock))
 	(##raise-type-exception 0 (macro-type-socket) send-message (list sock vec start end flags addr)))
     (if (not (u8vector? vec))
@@ -564,35 +710,25 @@ ___result = sendto(soc,buf,bufsiz,fl,(struct sockaddr *)&sa,sa_size);
     (if (not addr)
 	(raise-socket-exception-if-error (lambda () (c-send sock svec flags)) send-message)
 	(if (not (socket-address? addr))
-	    (##raise-type-exception 3 (macro-type-sockaddr) send-message (list sock vec start end flags addr))
-	    (raise-socket-exception-if-error (lambda () (c-sendto sock svec flags addr)) send-message)))))
+	    (##raise-type-exception 
+	     3 (macro-type-sockaddr) send-message
+	     (list sock vec start end flags addr))
+	    (raise-socket-exception-if-error
+	     (lambda () (c-sendto sock svec flags addr)) send-message)))))
 
 ; Receives a message from a socket of a given length and returns it as a
 ; u8vector. Optional flags may be specified. This procedure actually returns
 ; two values: the received message and the source address.
 
 (define (receive-message sock len #!optional (flags 0))
-  (let* (
-         (addr (make-unspecified-socket-address))
-	 (vec (make-u8vector len 0))
-	 (c-recvfrom
-	  (c-lambda (scheme-object scheme-object int scheme-object) int
-		    "
-struct sockaddr_storage sa;
-socklen_t sa_size;
-int soc = ___CAST(int,___INT(___UNCHECKEDSTRUCTUREREF(___arg1,___FIX(1),___SUB(0),___FAL)));
-void *buf = ___CAST(void *,___BODY_AS(___arg2,___tSUBTYPED));
-size_t bufsiz = ___CAST(size_t,___INT(___U8VECTORLENGTH(___arg2)));
-int fl = ___CAST(int,___INT(___arg3));
-___result = recvfrom(soc,buf,bufsiz,fl,(struct sockaddr *)&sa,&sa_size);
-if(sa_size > 0) {
-  build_scheme_sockaddr((struct sockaddr *)&sa,___arg4);
-}
-")))
+  (let ((addr (make-unspecified-socket-address))
+	 (vec (make-u8vector len 0)))
     (if (not (socket? sock))
-	(##raise-type-exception 0 (macro-type-socket) receive-message (list sock len flags)))
+	(##raise-type-exception 
+	 0 (macro-type-socket) receive-message (list sock len flags)))
     (let* ((size-actually-recvd
-	    (raise-socket-exception-if-error (lambda () (c-recvfrom sock vec flags addr)) receive-message)))
+	    (raise-socket-exception-if-error
+	     (lambda () (c-recvfrom sock vec flags addr)) receive-message)))
       (values
        (subu8vector vec 0 size-actually-recvd)
        addr))))
@@ -601,17 +737,13 @@ if(sa_size > 0) {
 ; of backlogged connections allowed.
 
 (define (listen-socket sock backlog)
-  (let* ((c-listen
-	  (c-lambda (scheme-object int) int
-		    "
-int soc = ___CAST(int,___INT(___UNCHECKEDSTRUCTUREREF(___arg1,___FIX(1),___SUB(0),___FAL)));
-___result = listen(soc,___arg2);
-")))
-    (if (not (socket? sock))
-	(##raise-type-exception 0 (macro-type-socket) listen-socket (list sock backlog)))
-    (raise-socket-exception-if-error (lambda () (c-listen sock backlog)) listen-socket)
-    (if #f #f)
-    ))
+  (if (not (socket? sock))
+      (##raise-type-exception
+       0 (macro-type-socket) listen-socket (list sock backlog)))
+  (raise-socket-exception-if-error
+   (lambda () (c-listen sock backlog)) listen-socket)
+  (if #f #f)
+  )
 
 ; Returns the local socket address of the socket.
 
@@ -669,29 +801,13 @@ else {
 ; the connection, and the address of the other side of the connection.
 
 (define (accept-connection sock) 
-  (let* (
-	 (dummy-sockaddr (macro-make-sockaddr 0 #f))
-	 (c-accept
-	  (c-lambda (scheme-object scheme-object) int
-		    "
-struct sockaddr_storage ss;
-socklen_t sslen = sizeof(struct sockaddr_storage);
-int soc = ___CAST(int,___INT(___UNCHECKEDSTRUCTUREREF(___arg1,___FIX(1),___SUB(0),___FAL)));
-int r = accept(soc,(struct sockaddr *)&ss,&sslen);
-if(r < 0) {
-   ___result = r;
-}
-else {
-   build_scheme_sockaddr((struct sockaddr *)&ss,___arg2);
-   int fl = fcntl(r,F_GETFL);
-   fcntl(r,F_SETFL,fl | O_NONBLOCK);
-   ___result = r;
-}
-")))
+  (let ((dummy-sockaddr (macro-make-sockaddr 0 #f)))
     (if (not (socket? sock))
-	(##raise-type-exception 0 (macro-type-socket) accept-connection (list sock)))
-    (let* ((s2 
-	    (raise-socket-exception-if-error (lambda () (c-accept sock dummy-sockaddr)) accept-connection)))
+	(##raise-type-exception
+	 0 (macro-type-socket) accept-connection (list sock)))
+    (let ((s2 
+	   (raise-socket-exception-if-error
+	    (lambda () (c-accept sock dummy-sockaddr)) accept-connection)))
       (raise-if-sockaddr-alloc-error dummy-sockaddr)
       (values (macro-really-make-socket s2) dummy-sockaddr))))
 
@@ -705,19 +821,7 @@ else {
 ; ### Socket Option Getters ###
 
 (define (do-boolean-socket-option socket level optname)
-  (let (
-	(v (make-vector 1))
-	(c-do-boolean-socket-option
-	  (c-lambda (scheme-object int int scheme-object) int
-		    "
-int optval = 0;
-socklen_t optlen = sizeof(optval);
-int r;
-int soc = ___CAST(int,___INT(___UNCHECKEDSTRUCTUREREF(___arg1,___FIX(1),___SUB(0),___FAL)));
-r = getsockopt(soc,___arg2,___arg3,&optval,&optlen);
-___VECTORSET(___arg4,___FIX(0L),___FIX(optval));
-___result = r;
-")))
+  (let ((v (make-vector 1)))
     (if (not (socket? socket))
 	(##raise-type-exception 0
 				(macro-type-socket)
@@ -741,19 +845,7 @@ ___result = r;
     (not (zero? (vector-ref v 0)))))
 
 (define (do-integer-socket-option socket level optname)
-  (let (
-	(v (make-vector 1))
-	(c-do-integer-socket-option
-	  (c-lambda (scheme-object int int scheme-object) int
-		    "
-int optval = 0;
-socklen_t optlen = sizeof(optval);
-int r;
-int soc = ___CAST(int,___INT(___UNCHECKEDSTRUCTUREREF(___arg1,___FIX(1),___SUB(0),___FAL)));
-r = getsockopt(soc,___arg2,___arg3,&optval,&optlen);
-___VECTORSET(___arg4,___FIX(0L),___FIX(optval));
-___result = r;
-")))
+  (let ((v (make-vector 1)))
     (if (not (socket? socket))
 	(##raise-type-exception 0
 				(macro-type-socket)
@@ -777,20 +869,7 @@ ___result = r;
     (vector-ref v 0)))
 
 (define (do-timeout-socket-option socket level optname)
-  (let (
-	(v (make-vector 2))
-	(c-do-integer-socket-option
-	  (c-lambda (scheme-object int int scheme-object) int
-		    "
-struct timeval optval;
-socklen_t optlen = sizeof(optval);
-int r;
-int soc = ___CAST(int,___INT(___UNCHECKEDSTRUCTUREREF(___arg1,___FIX(1),___SUB(0),___FAL)));
-r = getsockopt(soc,___arg2,___arg3,&optval,&optlen);
-___VECTORSET(___arg4,___FIX(0L),___FIX(optval.tv_sec));
-___VECTORSET(___arg4,___FIX(1L),___FIX(optval.tv_usec));
-___result = r;
-")))
+  (let ((v (make-vector 2)))
     (if (not (socket? socket))
 	(##raise-type-exception 0
 				(macro-type-socket)
@@ -807,7 +886,7 @@ ___result = r;
 				socket-option
 				(list socket level optname)))
     (raise-socket-exception-if-error
-     (lambda () (c-do-integer-socket-option socket
+     (lambda () (c-do-timeout-socket-option socket
 					    level
 					    optname
 					    v)) socket-option)
@@ -828,25 +907,6 @@ ___result = r;
 
 ; ### Socket option setters ###
 (define (do-boolean-set-socket-option socket level optname optval)
-  (let (
-	(c-do-boolean-set-socket-option
-	  (c-lambda (scheme-object int int scheme-object) int
-		    "
-int optval = 0;
-socklen_t optlen = sizeof(optval);
-int r;
-int soc = ___CAST(int,___INT(___UNCHECKEDSTRUCTUREREF(___arg1,___FIX(1),___SUB(0),___FAL)));
-if(___arg4 != ___FAL)
-{
-  optval = 1;
-}
-else
-{
- optval = 0;
-}
-r = setsockopt(soc,___arg2,___arg3,&optval,optlen);
-___result = r;
-")))
     (if (not (socket? socket))
 	(##raise-type-exception 0
 				(macro-type-socket)
@@ -867,20 +927,9 @@ ___result = r;
 					    level
 					    optname
 					    optval)) socket-option)
-    #!void))
+    #!void)
 
 (define (do-integer-set-socket-option socket level optname optval)
-  (let (
-	(c-do-integer-set-socket-option
-	  (c-lambda (scheme-object int int int) int
-		    "
-int optval = ___arg4;
-socklen_t optlen = sizeof(optval);
-int r;
-int soc = ___CAST(int,___INT(___UNCHECKEDSTRUCTUREREF(___arg1,___FIX(1),___SUB(0),___FAL)));
-r = setsockopt(soc,___arg2,___arg3,&optval,optlen);
-___result = r;
-")))
     (if (not (socket? socket))
 	(##raise-type-exception 0
 				(macro-type-socket)
@@ -906,22 +955,9 @@ ___result = r;
 					    level
 					    optname
 					    optval)) socket-option)
-    #!void))
+    #!void)
 
 (define (do-timeout-set-socket-option socket level optname optval)
-  (let (
-	(c-do-timeout-set-socket-option
-	  (c-lambda (scheme-object int int int int) int
-		    "
-struct timeval optval;
-socklen_t optlen = sizeof(optval);
-int r;
-int soc = ___CAST(int,___INT(___UNCHECKEDSTRUCTUREREF(___arg1,___FIX(1),___SUB(0),___FAL)));
-optval.tv_sec = ___arg4;
-optval.tv_usec = ___arg5;
-r = setsockopt(soc,___arg2,___arg3,&optval,optlen);
-___result = r;
-")))
     (if (not (socket? socket))
 	(##raise-type-exception 0
 				(macro-type-socket)
@@ -950,8 +986,7 @@ ___result = r;
 						  optname
 						  sec
 					    usec)) socket-option))
-    #!void))
-
+    #!void)
 
 (define (set-socket-option socket level optname optval)
   (cond
@@ -964,3 +999,4 @@ ___result = r;
    (else
     (error "unsupported socket option"))))
 
+(namespace (""))
