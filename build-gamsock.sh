@@ -1,2 +1,4 @@
-/usr/local/Gambit-C/current/bin/gsi config-gamsock.scm
-/usr/local/Gambit-C/current/bin/gsc gamsock.scm
+#!/bin/sh
+GAMBIT_PATH=$HOME/local/Gambit-C
+$GAMBIT_PATH/current/bin/gsi config-gamsock.scm
+$GAMBIT_PATH/current/bin/gsc gamsock.scm
