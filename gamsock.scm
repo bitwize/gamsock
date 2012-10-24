@@ -253,32 +253,48 @@ memcpy((void *)___BODY_AS(___arg2,___tSUBTYPED),(const void *)(&(sa_in->sin_addr
 ") a ip-addr)
     (values ip-addr portno)))
 
-;; ; Creates a new IPv6 socket address from a host IP address,
-;; ; port number, flow info and scope ID.
+; Creates a new IPv6 socket address from a host IP address,
+; port number, flow info and scope ID.
 
-;; (define (internet6-address->socket-address host port flowinfo scope-id)
-;;   (check-ip6-address host)
-;;   (macro-make-sockaddr
-;;    address-family/internet6
-;;    (macro-make-sockaddr-inet6-info host port flowinfo scope-id)))
+(define (internet6-address->socket-address host port flowinfo scope-id)
+  (check-ip6-address host)
+  ((c-lambda (scheme-object int int int) socket-address
+"
+struct sockaddr_storage *sa_st = (struct sockaddr_storage *)malloc(sizeof(struct sockaddr_storage));
+struct sockaddr_in6 *sa_in6 = (struct sockaddr_in6 *)sa_st;
+if(sa_in6 != NULL) {
+    sa_in6->sin6_family = AF_INET;
+    sa_in6->sin6_port = htons(___arg2);
+    sa_in6->sin6_flowinfo = htonl(___arg3);
+    sa_in6->sin6_scope_id = htonl(___arg4);
+    memcpy((void *)(&(sa_in6->sin6_addr)),(const void *)___BODY_AS(___arg1,___tSUBTYPED),sizeof(struct in6_addr));
+}
+___result_voidstar = sa_st;
+") host port flowinfo scope-id))
 
-;; ; IPv6 socket-address predicate.
+; IPv6 socket-address predicate.
 
-;; (define-sockaddr-family-pred internet6-socket-address? address-family/internet6)
+(define-sockaddr-family-pred internet6-socket-address? address-family/internet6)
 
-;; ; Returns the IPv6 address info associated with an IPv6
-;; ; socket address.
+; Returns the IPv6 address info associated with an IPv6
+; socket address.
 
-;; (define (socket-address->internet6-address a)
-;;   (check-socket-address a address-family/internet6 0 socket-address->internet-address (list a))
-;;   (let* ((b (macro-sockaddr-address a)))
-;;     (values 
-;;      (macro-sockaddr-inet6-info-host b)
-;;      (macro-sockaddr-inet6-info-port b)
-;;      (macro-sockaddr-inet6-info-flowinfo b)
-;;      (macro-sockaddr-inet6-info-scope-id b))))
+(define (socket-address->internet6-address a)
+  (check-socket-address a address-family/internet6 0 socket-address->internet-address (list a))
+  (let ((port ((c-lambda (socket-address) int
+"___result = ((struct sockaddr_in6 *)___arg1)->sin6_port;") a))
+	(flowinfo ((c-lambda (socket-address) int
+"___result = ((struct sockaddr_in6 *)___arg1)->sin6_flowinfo;") a))
+	(scope-id ((c-lambda (socket-address) int
+"___result = ((struct sockaddr_in6 *)___arg1)->sin6_scope_id;") a))
+	(ip6-addr (make-u8vector 16)))
+    ((c-lambda (socket-address scheme-object) void "
+struct sockaddr_in6 *sa_in6 = (struct sockaddr_in6 *)(___arg1);
+memcpy((void *)___BODY_AS(___arg2,___tSUBTYPED),(const void *)(&(sa_in6->sin6_addr)),16);
+") a ip-addr)
+    (values ip-addr portno flowinfo scope-id)))
 
-;; ; Creates a new unspecified socket address.
+; Creates a new unspecified socket address.
 
 (define (make-unspecified-socket-address)
   ((c-lambda () socket-address "
