@@ -3,11 +3,13 @@ corresponds with scsh's socket API. It was written by Jeffrey T. Read
 <bitwize@gmail.com> and released under the license terms as given in the
 file COPYING (basically, the same as scsh's license).
 
-To build, assuming your gambit is in /usr/local/Gambit-C/current/bin:
+To build, assuming your gambit is in $HOME/local/Gambit-C/bin:
 
-sh ./build-gamsock.sh
+    make
 
-Then you can do a (load "gamsock.o1") and all should be well.
+Then you can do a (load "gamsock.o1") and all should be well. If your
+Gambit is not located in the path above, you can change the
+GAMBIT_PATH variable in the Makefile to point to it.
 
 Stay tuned for future versions, with special guest stars: socket options, and
 database info (DNS, protocol names, etc.)! Keep those bug reports coming!
