@@ -105,7 +105,7 @@ c_sockaddr_size(struct sockaddr_storage *sa_st)
 (define socket-address-family
   (c-lambda (socket-address) int
 	    "
-___result = ___arg1->ss_family;
+___return(___arg1->ss_family);
 "))
 
 ; An exception that is raised when you try to access address information
@@ -142,7 +142,7 @@ ___result = ___arg1->ss_family;
 
 ; This does not yet work with character encodings except ASCII/Latin-1.
 
-(define unix-path-max ((c-lambda () int "___result = UNIX_PATH_MAX;")))
+(define unix-path-max ((c-lambda () int "___return(UNIX_PATH_MAX);")))
 
 (define (unix-address->socket-address fn)
   (let* (
@@ -157,7 +157,7 @@ if(sa_un != NULL) {
     strncpy(sa_un->sun_path,___arg1,UNIX_PATH_MAX);
     sa_un->sun_path[UNIX_PATH_MAX - 1] = '\\0';
 }
-___result_voidstar = (void *)sa_un;
+___return((void *)sa_un);
 ") fn))))
 
 ; Predicate for UNIX-socket-address-ness.
@@ -170,7 +170,7 @@ ___result_voidstar = (void *)sa_un;
 (define (socket-address->unix-address a)
   ((c-lambda (socket-address) nonnull-char-string "
 struct sockaddr_un *sa_un = (struct sockaddr_un *)(___arg1);
-___result = sa_un->sun_path;
+___return(sa_un->sun_path);
 ") a))
 
 (define (integer->network-order-vector-16 n)
@@ -230,7 +230,7 @@ if(sa_in != NULL) {
     sa_in->sin_port = htons(___arg2);
     memcpy((void *)(&(sa_in->sin_addr)),(const void *)___BODY_AS(___arg1,___tSUBTYPED),sizeof(struct in_addr));
 }
-___result_voidstar = sa_st;
+___return(sa_st);
 ") host port))
 
 ; IPv4 socket-address predicate.
@@ -244,7 +244,7 @@ ___result_voidstar = sa_st;
   (check-socket-address a address-family/internet 0 socket-address->internet-address (list a))  
   (let ((portno ((c-lambda (socket-address) int "
 struct sockaddr_in *sa_in = (struct sockaddr_in *)(___arg1);
-___result = ntohs(sa_in->sin_port);
+___return(ntohs(sa_in->sin_port));
 ") a))
 	(ip-addr (make-u8vector 4)))
     ((c-lambda (socket-address scheme-object) void "
@@ -286,7 +286,7 @@ struct sockaddr_storage *sa_st = (struct sockaddr_storage *)malloc(sizeof(struct
 if(sa_st != NULL) {
 sa_st->ss_family = AF_UNSPEC;
 }
-___result_voidstar = (void *)sa_st;
+___return((void *)sa_st);
 ")))
 
 ;; ; Predicate to test for an unspecified socket address.
@@ -298,7 +298,7 @@ ___result_voidstar = (void *)sa_st;
 ;; ; The exceptions are EAGAIN, EWOULDBLOCK, and EINTR; all of which
 ;; ; simply retry the operation until it's successful or raises another error.
 
-(define errno (c-lambda () int "___result = errno;"))
+(define errno (c-lambda () int "___return(errno);"))
 
 (define (raise-socket-exception-if-error thunk proc . args)
   (let loop
@@ -348,7 +348,7 @@ ___result_voidstar = (void *)sa_st;
 int s = socket(___arg1,___arg2,___arg3);
 int fl = fcntl(s,F_GETFL);
 fcntl(s,F_SETFL,fl | O_NONBLOCK);
-___result = s;
+___return(s);
 C-END
 ))
 
@@ -356,15 +356,15 @@ C-END
   (c-lambda (int socket-address) int #<<C-END
 int mysize;
 mysize = c_sockaddr_size((struct sockaddr_storage *)(___arg2));
-___result = bind(___arg1,(struct sockaddr *)(___arg2),mysize);
+___return(bind(___arg1,(struct sockaddr *)(___arg2),mysize));
 C-END
 ))
 
 (define c-connect (c-lambda (int socket-address) int #<<C-END
 int mysize;
 mysize = c_sockaddr_size((struct sockaddr_storage *)(___arg2));
-___result = connect(___arg1,
-                    (struct sockaddr *)___arg2,mysize);
+___return(connect(___arg1,
+                    (struct sockaddr *)___arg2,mysize));
 C-END
 ))
 (define c-send
@@ -373,7 +373,7 @@ int soc = ___arg1;
 void *buf = ___CAST(void *,___BODY_AS(___arg2,___tSUBTYPED));
 size_t bufsiz = ___CAST(size_t,___INT(___U8VECTORLENGTH(___arg2)));
 int fl = ___CAST(int,___INT(___arg3));
-___result = send(soc,buf,bufsiz,fl);
+___return(send(soc,buf,bufsiz,fl));
 C-END
 ))
 (define c-sendto
@@ -385,7 +385,7 @@ void *buf = ___CAST(void *,___BODY_AS(___arg2,___tSUBTYPED));
 size_t bufsiz = ___CAST(size_t,___INT(___U8VECTORLENGTH(___arg2)));
 int fl = ___CAST(int,___INT(___arg3));
 sa_size = c_sockaddr_size((struct sockaddr_storage *)sa);
-___result = sendto(soc,buf,bufsiz,fl,(struct sockaddr *)sa,sa_size);
+___return(sendto(soc,buf,bufsiz,fl,(struct sockaddr *)sa,sa_size));
 C-END
 ))
 
@@ -397,13 +397,13 @@ int soc = ___arg1;
 void *buf = ___CAST(void *,___BODY_AS(___arg2,___tSUBTYPED));
 size_t bufsiz = ___CAST(size_t,___INT(___U8VECTORLENGTH(___arg2)));
 int fl = ___CAST(int,___INT(___arg3));
-___result = recvfrom(soc,buf,bufsiz,fl,(struct sockaddr *)sa,&sa_size);
+___return(recvfrom(soc,buf,bufsiz,fl,(struct sockaddr *)sa,&sa_size));
 C-END
 ))
 (define c-listen
   (c-lambda (int int) int #<<C-END
 int soc = ___arg1;
-___result = listen(soc,___arg2);
+___return(listen(soc,___arg2));
 C-END
 ))
 
@@ -414,12 +414,12 @@ socklen_t sslen = sizeof(struct sockaddr_storage);
 int soc = ___arg1;
 int r = accept(soc,(struct sockaddr *)ss,&sslen);
 if(r < 0) {
-   ___result = r;
+   ___return(r);
 }
 else {
    int fl = fcntl(r,F_GETFL);
    fcntl(r,F_SETFL,fl | O_NONBLOCK);
-   ___result = r;
+   ___return(r);
 }
 C-END
 ))
@@ -433,7 +433,7 @@ int r;
 int soc = ___arg1;
 r = getsockopt(soc,___arg2,___arg3,&optval,&optlen);
 ___VECTORSET(___arg4,___FIX(0L),___FIX(optval));
-___result = r;
+___return(r);
 C-END
 ))
 (define c-do-integer-socket-option
@@ -444,7 +444,7 @@ int r;
 int soc = ___arg1;
 r = getsockopt(soc,___arg2,___arg3,&optval,&optlen);
 ___VECTORSET(___arg4,___FIX(0L),___FIX(optval));
-___result = r;
+___return(r);
 C-END
 ))
 
@@ -457,7 +457,7 @@ int soc = ___arg1;
 r = getsockopt(soc,___arg2,___arg3,&optval,&optlen);
 ___VECTORSET(___arg4,___FIX(0L),___FIX(optval.tv_sec));
 ___VECTORSET(___arg4,___FIX(1L),___FIX(optval.tv_usec));
-___result = r;
+___return(r);
 C-END
 ))
 
@@ -476,7 +476,7 @@ else
  optval = 0;
 }
 r = setsockopt(soc,___arg2,___arg3,&optval,optlen);
-___result = r;
+___return(r);
 C-END
 ))
 
@@ -487,7 +487,7 @@ socklen_t optlen = sizeof(optval);
 int r;
 int soc = ___arg1;
 r = setsockopt(soc,___arg2,___arg3,&optval,optlen);
-___result = r;
+___return(r);
 C-END
 ))
 
@@ -500,12 +500,12 @@ int soc = ___arg1;
 optval.tv_sec = ___arg4;
 optval.tv_usec = ___arg5;
 r = setsockopt(soc,___arg2,___arg3,&optval,optlen);
-___result = r;
+___return(r);
 C-END
 ))
 
 (define c-close
-  (c-lambda (int) int "___result = close(___arg1);"))
+  (c-lambda (int) int "___return(close(___arg1));"))
 
 
 ; GAMSOCK API begins here.
@@ -615,7 +615,7 @@ struct sockaddr_storage* ss = ___arg2;
 socklen_t sslen = sizeof(struct sockaddr_storage);
 int soc = ___arg1;
 int r = getsockname(soc,(struct sockaddr *)&ss,&sslen);
-___result = r;
+___return(r);
 ")))
     (if (not (socket? sock))
 	(##raise-type-exception 0 'socket socket-local-address (list sock)))
@@ -635,7 +635,7 @@ struct sockaddr_storage ss;
 socklen_t sslen = sizeof(struct sockaddr_storage);
 int soc = ___arg1;
 int r = getpeername(soc,(struct sockaddr *)&ss,&sslen);
-___result = r;
+___return(r);
 ")))
     (if (not (socket? sock))
 	(##raise-type-exception 0 'socket socket-remote-address (list sock)))

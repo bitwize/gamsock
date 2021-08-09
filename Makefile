@@ -1,4 +1,4 @@
-GAMBIT_PATH = $(HOME)/local/Gambit-C
+GAMBIT_PATH = $(HOME)/local/opt/gambit
 
 gamsock.o1: gamsock.scm gamsock-headers.scm gamsock-constants.scm
 	$(GAMBIT_PATH)/bin/gsc -keep-c -o $@ gamsock.scm 
