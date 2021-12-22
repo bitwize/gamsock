@@ -281,7 +281,7 @@ ___result_voidstar = sa_st;
 
 (define (socket-address->internet6-address a)
   (check-socket-address a address-family/internet6 0 socket-address->internet-address (list a))
-  (let ((port ((c-lambda (socket-address) int
+  (let ((portno ((c-lambda (socket-address) int
 "___result = ((struct sockaddr_in6 *)___arg1)->sin6_port;") a))
 	(flowinfo ((c-lambda (socket-address) int
 "___result = ((struct sockaddr_in6 *)___arg1)->sin6_flowinfo;") a))
@@ -291,8 +291,8 @@ ___result_voidstar = sa_st;
     ((c-lambda (socket-address scheme-object) void "
 struct sockaddr_in6 *sa_in6 = (struct sockaddr_in6 *)(___arg1);
 memcpy((void *)___BODY_AS(___arg2,___tSUBTYPED),(const void *)(&(sa_in6->sin6_addr)),16);
-") a ip-addr)
-    (values ip-addr portno flowinfo scope-id)))
+") a ip6-addr)
+    (values ip6-addr portno flowinfo scope-id)))
 
 ; Creates a new unspecified socket address.
 
